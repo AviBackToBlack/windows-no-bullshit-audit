@@ -553,16 +553,31 @@ $HighSignalProviders = @(
 # ONE pass over the window. Everything downstream is computed from this array
 # instead of re-querying the event log, which used to cost 2-3 full scans.
 $allEvents = @()
+$truncatedLogs = @()
 $swEvents = [Diagnostics.Stopwatch]::StartNew()
 foreach ($log in @('System','Application')) {
     try {
-        $allEvents += @(Get-WinEvent -FilterHashtable @{LogName=$log;StartTime=$Since;Level=1,2,3} -MaxEvents $MaxEventsPerLog -ErrorAction Stop)
+        $filter = @{LogName=$log;StartTime=$Since;Level=1,2,3}
+        $batch = @(Get-WinEvent -FilterHashtable $filter -MaxEvents $MaxEventsPerLog -ErrorAction Stop)
+        # Get-WinEvent returns the NEWEST N and says nothing about the rest, so
+        # a busy log would silently lose its oldest faults and hand us a
+        # first-seen date that is simply wrong. Cost one extra count query to
+        # find out, and label the window instead of pretending it is complete.
+        if ($batch.Count -ge $MaxEventsPerLog) {
+            $total = $null
+            try { $total = @(Get-WinEvent -FilterHashtable $filter -ErrorAction Stop).Count } catch {}
+            $truncatedLogs += [pscustomobject]@{
+                Log = $log; Returned = $batch.Count; Available = $total; Cap = $MaxEventsPerLog
+            }
+            $Warnings.Add("$log hit the $MaxEventsPerLog event cap. Counts are lower bounds and first-seen dates are not the true earliest occurrence.")
+        }
+        $allEvents += $batch
     } catch {
         if ($_.Exception.Message -notmatch 'No events were found') { $Warnings.Add("Event query failed for ${log}: $($_.Exception.Message)") }
     }
 }
 $swEvents.Stop()
-Add-Journal 'Event enumeration' 'OK' 0 $swEvents.Elapsed.TotalSeconds '05-Events' "$($allEvents.Count) warning/error/critical events in $EventDays days"
+Add-Journal 'Event enumeration' $(if ($truncatedLogs.Count) { 'TRUNCATED' } else { 'OK' }) 0 $swEvents.Elapsed.TotalSeconds '05-Events' "$($allEvents.Count) warning/error/critical events in $EventDays days"
 
 $allEvents |
     Select-Object TimeCreated,LogName,ProviderName,Id,Level,LevelDisplayName,
@@ -821,7 +836,7 @@ try {
     $perf | ConvertTo-Json | Out-File (Join-Path $RunDir '13-Performance\perf-baseline.json') -Encoding utf8
 } catch { $Warnings.Add("Performance baseline failed: $($_.Exception.Message)") }
 
-$topProcesses = Invoke-PSCapture 'Top processes' {
+$allProcesses = Invoke-PSCapture 'Processes' {
     Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
         [pscustomobject]@{
             Name=$_.ProcessName; Id=$_.Id
@@ -830,8 +845,13 @@ $topProcesses = Invoke-PSCapture 'Top processes' {
             PrivateMB=[math]::Round($_.PrivateMemorySize64/1MB,1)
             Handles=$_.HandleCount
         }
-    } | Sort-Object CPUSeconds -Descending | Select-Object -First 60
-} '13-Performance\top-processes.csv' Csv
+    }
+} '13-Performance\processes.csv' Csv
+
+# Both rankings must come from the full set. Ranking memory inside the CPU
+# top-60 hides the classic case: a process that burns no CPU and eats all the RAM.
+$topByCpu    = @($allProcesses | Sort-Object CPUSeconds -Descending  | Select-Object -First 10 Name,CPUSeconds,WorkingSetMB)
+$topByMemory = @($allProcesses | Sort-Object WorkingSetMB -Descending | Select-Object -First 10 Name,WorkingSetMB,CPUSeconds)
 
 # ===================================================================== 14 ====
 # Updates / pending reboot
@@ -906,7 +926,11 @@ $diskDigest = @(
         $rc = $reliability | Where-Object { $_.SerialNumber -eq (Get-Prop $pd 'SerialNumber') } | Select-Object -First 1
         [pscustomobject]@{
             Model=(Protect-Identity (Get-Prop $pd 'FriendlyName'))
-            Serial=(Protect-Identity (Get-Prop $pd 'SerialNumber'))
+            # A disk serial is a persistent hardware identifier and is never
+            # needed to reason about disk health. Protect-Identity only rewrites
+            # registered literals, so it would have passed this straight through
+            # while the digest claimed to be redacted.
+            Serial=(Get-SafeField (Get-Prop $pd 'SerialNumber') '<SERIAL>')
             Media=(Get-Prop $pd 'MediaType'); Bus=(Get-Prop $pd 'BusType')
             SizeGB=[math]::Round([double](Get-Prop $pd 'Size' 0)/1GB,1)
             Health=(Get-Prop $pd 'HealthStatus')
@@ -923,6 +947,15 @@ $recentSoftware = @($software | Where-Object { $_.InstallDate } | Sort-Object In
     ForEach-Object { [pscustomobject]@{Name=$_.DisplayName;Version=$_.DisplayVersion;Publisher=$_.Publisher;Installed=$_.InstallDate} })
 
 $failedProbes = @($Journal | Where-Object { $_.Status -in @('ERROR','TIMEOUT') } | Select-Object -ExpandProperty Name -Unique)
+
+# A native tool exiting non-zero is not automatically a failure: pnputil
+# /enum-devices /problem exits non-zero when there are no problem devices, and
+# several powercfg/fsutil queries do the same. Folding these into failed_probes
+# would drown the real failures. But the reviewer's underlying point stands -
+# a genuinely broken native probe would otherwise look like an empty, healthy
+# result. So surface them as their own category and let the agent judge.
+$nonZeroProbes = @($Journal | Where-Object { $_.Status -eq 'NONZERO' } |
+    Select-Object @{n='Probe';e={$_.Name}},ExitCode -Unique)
 
 $triage = [ordered]@{
     schema_version = '1.0'
@@ -956,6 +989,8 @@ $triage = [ordered]@{
         events_examined    = $allEvents.Count
         elevated           = $true
         failed_probes      = $failedProbes
+        nonzero_probes     = $nonZeroProbes
+        truncated_logs     = @($truncatedLogs)
         warnings           = @($Warnings)
     }
 
@@ -1015,8 +1050,8 @@ $triage = [ordered]@{
 
     performance = [ordered]@{
         snapshot       = $perf
-        top_by_cpu     = @($topProcesses | Select-Object -First 10 Name,CPUSeconds,WorkingSetMB)
-        top_by_memory  = @($topProcesses | Sort-Object WorkingSetMB -Descending | Select-Object -First 10 Name,WorkingSetMB)
+        top_by_cpu     = $topByCpu
+        top_by_memory  = $topByMemory
     }
 
     recent_software = $recentSoftware
@@ -1026,9 +1061,18 @@ $triage = [ordered]@{
 }
 
 # --- cap enforcement -------------------------------------------------------
-# Trim order is deliberate: least discriminating evidence goes first. If a
-# section is trimmed the digest says so, so the agent knows to query raw
-# evidence for that domain instead of assuming the section was empty.
+# The cap is a promise about the operator's context budget, so it has to hold on
+# a machine with 200 problem devices and 40 disks, not just on a tidy one.
+#
+# Three stages:
+#   1. a deliberate plan - least discriminating evidence goes first;
+#   2. a generic fallback that halves every remaining list section, including
+#      the ones the plan does not name, until it fits;
+#   3. a hard post-serialization check that accounts for the trim metadata
+#      itself, because `trimmed` and `digest_bytes` are added after measuring.
+#
+# Every reduction is recorded, so a short section always means "trimmed, go
+# query the raw evidence" and never "the machine was clean".
 
 $trimPlan = @(
     @{ Path='startup_entries';            Keep=15 },
@@ -1041,26 +1085,81 @@ $trimPlan = @(
     @{ Path='startup_entries';            Keep=0  }
 )
 
+# Ordered least to most diagnostically valuable. pnp_problems and storage come
+# last on purpose: losing them is losing the point of the audit.
+$fallbackOrder = @(
+    'recent_hotfixes','startup_entries','recent_software','third_party_auto_services',
+    'third_party_minifilters','third_party_kernel_drivers','top_event_signatures',
+    'pnp_problems'
+)
+
 function Measure-TriageBytes {
     param($Object)
     return [Text.Encoding]::UTF8.GetByteCount(($Object | ConvertTo-Json -Depth 8 -Compress))
 }
 
+function Set-TrimmedSection {
+    param([string]$Key,[int]$Keep)
+    $current = @($triage[$Key])
+    if ($current.Count -le $Keep) { return $false }
+    $triage[$Key] = @($current | Select-Object -First $Keep)
+    $Trimmed.Add("$Key`: $($current.Count) -> $Keep (query raw evidence for the rest)")
+    return $true
+}
+
+# Reserve room for the trim metadata that has not been added yet.
+$reserve = 400
+$budget = $MaxTriageBytes - $reserve
 $size = Measure-TriageBytes $triage
+
 foreach ($step in $trimPlan) {
-    if ($size -le $MaxTriageBytes) { break }
-    $key = $step.Path
-    $current = @($triage[$key])
-    if ($current.Count -le $step.Keep) { continue }
-    $triage[$key] = @($current | Select-Object -First $step.Keep)
-    $Trimmed.Add("$key`: $($current.Count) -> $($step.Keep) (query raw evidence for the rest)")
+    if ($size -le $budget) { break }
+    if (Set-TrimmedSection $step.Path $step.Keep) { $size = Measure-TriageBytes $triage }
+}
+
+# Stage 2: nothing in the plan is left, so halve everything repeatedly.
+$guard = 0
+while ($size -gt $budget -and $guard -lt 40) {
+    $guard++
+    $shrunk = $false
+    foreach ($key in $fallbackOrder) {
+        if ($size -le $budget) { break }
+        $count = @($triage[$key]).Count
+        if ($count -le 1) { continue }
+        if (Set-TrimmedSection $key ([math]::Max(1,[int][math]::Floor($count / 2)))) {
+            $shrunk = $true
+            $size = Measure-TriageBytes $triage
+        }
+    }
+    if (-not $shrunk) { break }
+}
+
+# Stage 3: the storage section is machine-dependent and not in either list.
+if ($size -gt $budget -and @($triage.storage.volumes).Count -gt 8) {
+    $n = @($triage.storage.volumes).Count
+    $triage.storage.volumes = @($triage.storage.volumes | Select-Object -First 8)
+    $Trimmed.Add("storage.volumes: $n -> 8 (see 02-Storage\volumes.csv)")
     $size = Measure-TriageBytes $triage
 }
+
 $triage['trimmed'] = @($Trimmed)
 $triage['digest_bytes'] = Measure-TriageBytes $triage
 
 $triageJson = $triage | ConvertTo-Json -Depth 8 -Compress
-[IO.File]::WriteAllText((Join-Path $RunDir 'TRIAGE.json'), $triageJson, (New-Object Text.UTF8Encoding($false)))
+$finalBytes = [Text.Encoding]::UTF8.GetByteCount($triageJson)
+
+# If trimming could not reach the budget, do not ship a file called TRIAGE.json:
+# that name is a promise about size. Write the data under a name that says what
+# it is, keep going so the operator still gets a usable TRIAGE.md, and exit
+# non-zero at the very end. Failing loudly must not mean handing back nothing
+# after a multi-minute collection.
+$digestOverBudget = ($finalBytes -gt $MaxTriageBytes)
+if ($digestOverBudget) {
+    $Warnings.Add("TRIAGE.json is $finalBytes bytes after all trimming, over the $MaxTriageBytes cap. Written as TRIAGE-OVERSIZED.json instead.")
+    [IO.File]::WriteAllText((Join-Path $RunDir 'TRIAGE-OVERSIZED.json'), $triageJson, (New-Object Text.UTF8Encoding($false)))
+} else {
+    [IO.File]::WriteAllText((Join-Path $RunDir 'TRIAGE.json'), $triageJson, (New-Object Text.UTF8Encoding($false)))
+}
 
 # --- markdown digest -------------------------------------------------------
 
@@ -1150,11 +1249,20 @@ $null = $md.AppendLine()
 $null = $md.AppendLine("Top RSS: " + (($triage.performance.top_by_memory | ForEach-Object { "$($_.Name)=$($_.WorkingSetMB)MB" }) -join ', '))
 $null = $md.AppendLine()
 
-if (@($Trimmed).Count -or @($failedProbes).Count -or @($Warnings).Count) {
+if (@($Trimmed).Count -or @($failedProbes).Count -or @($nonZeroProbes).Count -or
+    @($truncatedLogs).Count -or @($Warnings).Count) {
     $null = $md.AppendLine('## Gaps in this digest')
+    $null = $md.AppendLine()
+    $null = $md.AppendLine('Anything listed here is **unknown**, not healthy.')
     $null = $md.AppendLine()
     foreach ($t in $Trimmed)      { $null = $md.AppendLine("- trimmed: $t") }
     foreach ($f in $failedProbes) { $null = $md.AppendLine("- probe failed: $f") }
+    foreach ($l in $truncatedLogs) {
+        $null = $md.AppendLine("- **log truncated**: $($l.Log) returned $($l.Returned) of $($l.Available) events (cap $($l.Cap)). Counts are lower bounds and FirstSeen is not the true earliest occurrence.")
+    }
+    foreach ($n in @($nonZeroProbes) | Select-Object -First 12) {
+        $null = $md.AppendLine("- non-zero exit: $($n.Probe) returned $($n.ExitCode) (often normal for query tools - check the output before treating it as a failure)")
+    }
     foreach ($w in @($Warnings) | Select-Object -First 10) { $null = $md.AppendLine("- warning: $w") }
     $null = $md.AppendLine()
 }
@@ -1174,6 +1282,27 @@ $null = $md.AppendLine()
 $null = $md.AppendLine('Do not "fix" every Event Viewer error. Correlate first, repair second, verify last.')
 
 $mdText = $md.ToString()
+
+# TRIAGE.md is what gets pasted into a chat, so it needs its own runtime bound
+# rather than an assumption that trimming TRIAGE.json is enough. The Markdown
+# is roughly two thirds the size of the compact JSON in practice, but "in
+# practice" is exactly the assumption that fails on an unusual machine.
+$mdBudget = [int]($MaxTriageBytes * 0.75)
+$mdBytes = [Text.Encoding]::UTF8.GetByteCount($mdText)
+if ($mdBytes -gt $mdBudget) {
+    $keepChars = [int]($mdBudget * 0.92)
+    if ($keepChars -lt $mdText.Length) {
+        $mdText = $mdText.Substring(0, $keepChars) + @"
+
+---
+
+> **This digest was truncated at $mdBudget bytes** to protect the context budget.
+> The full structured digest is TRIAGE.json in the evidence root. Sections after
+> this point are missing, not empty - query the raw evidence for them.
+"@
+    }
+    $Warnings.Add("TRIAGE.md exceeded $mdBudget bytes and was truncated. Use TRIAGE.json for the complete digest.")
+}
 [IO.File]::WriteAllText((Join-Path $RunDir 'TRIAGE.md'), $mdText, (New-Object Text.UTF8Encoding($false)))
 
 # ------------------------------------------------------------- run artifacts -
@@ -1207,3 +1336,18 @@ Write-Host 'Do NOT paste the ZIP or the raw CSV/EVTX files. They are for targete
 Write-Host "Raw evidence: $RunDir"
 if (-not $NoZip) { Write-Host "ZIP:          $ZipPath" }
 Write-Host ('=' * 72) -ForegroundColor DarkGray
+
+if ($digestOverBudget) {
+    Write-Host ''
+    Write-Host "DIGEST BUDGET EXCEEDED: $finalBytes bytes > $MaxTriageBytes after all trimming." -ForegroundColor Red
+    Write-Host 'The structured digest was written as TRIAGE-OVERSIZED.json rather than'
+    Write-Host 'TRIAGE.json, because that name is a promise about size. TRIAGE.md above is'
+    Write-Host 'still within its own budget and is safe to paste.'
+    Write-Host 'Re-run with a larger -MaxTriageBytes only if you accept the context cost.'
+    exit 75
+}
+
+# Explicit success. Without this the script inherits $LASTEXITCODE from whatever
+# native tool ran last, and several of them exit non-zero as a normal query
+# result, so callers could not tell a real failure from fsutil saying "not dirty".
+exit 0

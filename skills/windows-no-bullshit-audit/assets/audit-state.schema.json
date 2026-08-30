@@ -67,21 +67,21 @@
       "type": "object",
       "required": ["id", "domain", "title", "state", "confidence"],
       "properties": {
-        "id": { "type": "string" },
-        "domain": { "type": "string" },
-        "title": { "type": "string" },
+        "id": { "type": "string", "minLength": 1 },
+        "domain": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
         "state": { "enum": ["healthy", "observe", "action", "critical", "historical"] },
         "initial_state": { "enum": ["healthy", "observe", "action", "critical", "historical"] },
         "confidence": { "enum": ["HIGH", "MEDIUM", "LOW", "UNKNOWN"] },
-        "local_evidence": { "type": "array", "items": { "type": "string" } },
-        "lifecycle_context": { "type": "array", "items": { "type": "string" } },
-        "external_evidence": { "type": "array", "items": { "type": "string" } },
-        "conclusion": { "type": "string" },
-        "recommended_action": { "type": "string" },
-        "approval": { "type": "string" },
-        "verification": { "type": "string" },
-        "remaining_uncertainty": { "type": "string" },
-        "budget_note": { "type": "string" }
+        "local_evidence": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "lifecycle_context": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "external_evidence": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "conclusion": { "type": "string", "minLength": 1 },
+        "recommended_action": { "type": "string", "minLength": 1 },
+        "approval": { "type": "string", "minLength": 1 },
+        "verification": { "type": "string", "minLength": 1 },
+        "remaining_uncertainty": { "type": "string", "minLength": 1 },
+        "budget_note": { "type": "string", "minLength": 1 }
       },
       "allOf": [
         {
@@ -100,7 +100,7 @@
       "type": "object",
       "required": ["id", "action", "reason", "risk", "status"],
       "properties": {
-        "id": { "type": "string" },
+        "id": { "type": "string", "minLength": 1 },
         "action": { "type": "string" },
         "reason": { "type": "string" },
         "risk": { "enum": ["low", "medium", "high"] },
@@ -121,7 +121,7 @@
         "reason": { "type": "string" },
         "result": { "type": "string" },
         "exit_code": { "type": ["integer", "null"] },
-        "verification": { "type": "string" },
+        "verification": { "type": "string", "minLength": 1 },
         "rollback": { "type": "string" }
       }
     },

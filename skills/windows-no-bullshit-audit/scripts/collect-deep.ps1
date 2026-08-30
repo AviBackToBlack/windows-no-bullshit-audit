@@ -168,37 +168,56 @@ if ($Only -contains 'Power') {
 
 function Read-Text([string]$rel) { try { return Get-Content (Join-Path $RunDir $rel) -Raw -ErrorAction Stop } catch { return '' } }
 
-$dism = Read-Text '01-Integrity\DISM-ScanHealth.txt'
-$sfc  = Read-Text '01-Integrity\SFC-VerifyOnly.txt'
+# Only report scopes this invocation actually executed. A previous full run
+# leaves DISM-ScanHealth.txt on disk, and reading it after `-Only Storage`
+# would present a stale result as a fresh verdict - which is precisely the
+# "repair succeeded, therefore healthy" mistake this skill exists to prevent.
+$ranIntegrity = $Only -contains 'Integrity'
+$ranStorage   = $Only -contains 'Storage'
+$ranPower     = $Only -contains 'Power'
 
-$dismClass = if (-not $dism) { 'NOT_RUN' }
+$dism = if ($ranIntegrity) { Read-Text '01-Integrity\DISM-ScanHealth.txt' } else { '' }
+$sfc  = if ($ranIntegrity) { Read-Text '01-Integrity\SFC-VerifyOnly.txt' }  else { '' }
+
+$dismClass = if (-not $ranIntegrity) { 'NOT_RUN_THIS_INVOCATION' }
+             elseif (-not $dism) { 'NOT_RUN' }
              elseif ($dism -match 'No component store corruption detected') { 'CLEAN' }
              elseif ($dism -match 'repairable|corruption detected') { 'ATTENTION' }
              else { 'UNKNOWN' }
-$sfcClass  = if (-not $sfc) { 'NOT_RUN' }
+$sfcClass  = if (-not $ranIntegrity) { 'NOT_RUN_THIS_INVOCATION' }
+             elseif (-not $sfc) { 'NOT_RUN' }
              elseif ($sfc -match 'did not find any integrity violations') { 'CLEAN' }
              elseif ($sfc -match 'was unable to fix') { 'ATTENTION' }
              elseif ($sfc -match 'integrity violations|found corrupt files') { 'ATTENTION' }
              else { 'UNKNOWN' }
 
 $chkdsk = @()
-foreach ($f in @(Get-ChildItem (Join-Path $RunDir '02-Storage') -Filter 'chkdsk-*-scan.txt' -File -ErrorAction SilentlyContinue)) {
-    $t = ''
-    try { $t = Get-Content $f.FullName -Raw -ErrorAction Stop } catch {}
-    $cls = if ($t -match 'found no problems|no further action is required') { 'CLEAN' }
-           elseif ($t -match 'found problems|Run chkdsk /scan|errors') { 'ATTENTION' }
-           else { 'UNKNOWN' }
-    $chkdsk += [pscustomobject]@{ Volume=($f.BaseName -replace '^chkdsk-|-scan$',''); Result=$cls }
+if ($ranStorage) {
+    # Only files written by a step in THIS run, matched through the journal
+    # rather than by globbing the directory.
+    $storageOutputs = @($Steps | Where-Object { $_.Output -like '02-Storage\chkdsk-*' })
+    foreach ($s in $storageOutputs) {
+        $t = ''
+        try { $t = Get-Content (Join-Path $RunDir $s.Output) -Raw -ErrorAction Stop } catch {}
+        $cls = if ($s.Status -ne 'OK' -and $s.Status -ne 'NONZERO') { 'UNKNOWN' }
+               elseif ($t -match 'found no problems|no further action is required') { 'CLEAN' }
+               elseif ($t -match 'found problems|errors') { 'ATTENTION' }
+               else { 'UNKNOWN' }
+        $vol = ([IO.Path]::GetFileNameWithoutExtension($s.Output)) -replace '^chkdsk-|-scan$',''
+        $chkdsk += [pscustomobject]@{ Volume=$vol; Result=$cls; Status=$s.Status }
+    }
 }
 
 # powercfg /energy writes errors/warnings counts into the HTML; extract only the
 # headline numbers, never the HTML itself.
 $energyErrors = $null; $energyWarnings = $null
-try {
-    $eh = Get-Content (Join-Path $RunDir '09-Power\energy.html') -Raw -ErrorAction Stop
-    if ($eh -match '(?s)Errors.*?(\d+)')   { $energyErrors   = [int]$Matches[1] }
-    if ($eh -match '(?s)Warnings.*?(\d+)') { $energyWarnings = [int]$Matches[1] }
-} catch {}
+if ($ranPower) {
+    try {
+        $eh = Get-Content (Join-Path $RunDir '09-Power\energy.html') -Raw -ErrorAction Stop
+        if ($eh -match '(?s)Errors.*?(\d+)')   { $energyErrors   = [int]$Matches[1] }
+        if ($eh -match '(?s)Warnings.*?(\d+)') { $energyWarnings = [int]$Matches[1] }
+    } catch {}
+}
 
 # Copy servicing logs only if a scan actually found something. CBS.log is
 # routinely 5-50 MB and is pure noise on a clean machine.
@@ -212,6 +231,7 @@ $digest = [ordered]@{
     schema_version   = '1.0'
     generated_at     = (Get-Date).ToString('o')
     duration_minutes = [math]::Round(((Get-Date)-$Start).TotalMinutes,1)
+    scopes_run       = @($Only)
     dism_scanhealth  = $dismClass
     sfc_verifyonly   = $sfcClass
     chkdsk           = $chkdsk
@@ -225,17 +245,28 @@ $digest = [ordered]@{
 $md = @()
 $md += '# Deep scan results'
 $md += ''
-$md += "Completed in $($digest.duration_minutes) minutes."
+$md += "Completed in $($digest.duration_minutes) minutes. Scopes run: **$($Only -join ', ')**."
 $md += ''
 $md += '| Scan | Result |'
 $md += '|---|---|'
 $md += "| DISM /ScanHealth | **$dismClass** |"
 $md += "| SFC /verifyonly | **$sfcClass** |"
-foreach ($c in $chkdsk) { $md += "| CHKDSK /scan $($c.Volume): | **$($c.Result)** |" }
-if ($null -ne $energyErrors -or $null -ne $energyWarnings) {
+if ($ranStorage) {
+    foreach ($c in $chkdsk) { $md += "| CHKDSK /scan $($c.Volume): | **$($c.Result)** |" }
+    if (-not $chkdsk.Count) { $md += '| CHKDSK /scan | no fixed NTFS volume found |' }
+} else {
+    $md += '| CHKDSK /scan | **NOT_RUN_THIS_INVOCATION** |'
+}
+if ($ranPower) {
     $md += "| powercfg /energy | $energyErrors errors, $energyWarnings warnings |"
+} else {
+    $md += '| powercfg /energy | **NOT_RUN_THIS_INVOCATION** |'
 }
 $md += ''
+if ($Only.Count -lt 3) {
+    $md += "> Scopes outside ``$($Only -join ', ')`` were not executed in this run. Any result for them from an earlier run is deliberately not reported here, because a stale scan must never read as a fresh verdict."
+    $md += ''
+}
 foreach ($s in $Steps | Where-Object { $_.Status -ne 'OK' }) {
     $md += "- step ``$($s.Name)`` finished as **$($s.Status)** ($($s.Note)). Treat its result as UNKNOWN, not clean."
 }

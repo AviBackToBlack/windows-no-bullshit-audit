@@ -108,6 +108,7 @@ foreach ($f in @(Get-ChildItem $findingsDir -Filter '*.json' -File -ErrorAction 
     $null = $findings.Add($obj)
 }
 
+$findingProblemCount = $problems.Count
 if ($problems.Count) {
     Write-Host "Finding validation problems ($($problems.Count)):" -ForegroundColor Yellow
     $problems | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
@@ -129,13 +130,37 @@ foreach ($s in $StateLabel.Keys) {
 
 $triage = $null
 $triagePath = Join-Path $RunDir 'TRIAGE.json'
-if (Test-Path $triagePath) { try { $triage = Get-Content $triagePath -Raw | ConvertFrom-Json } catch {} }
+if (Test-Path $triagePath) {
+    try { $triage = Get-Content $triagePath -Raw | ConvertFrom-Json }
+    catch {
+        # Silently falling back to defaults would print authoritative-looking
+        # target metadata sourced from nothing at all.
+        $problems.Add("TRIAGE.json exists but could not be parsed ($($_.Exception.Message)). Target metadata in this report is unverified.")
+    }
+} else {
+    $problems.Add('TRIAGE.json not found in the run directory. Target metadata in this report is unverified.')
+}
 
 $target = Get-Prop $triage 'target'
 $computer = Get-Prop $target 'computer' $env:COMPUTERNAME
 $winDesc  = (@((Get-Prop $target 'os_caption'), (Get-Prop $target 'display_version'),
                 "build $(Get-Prop $target 'os_build')", (Get-Prop $target 'architecture')) |
              Where-Object { $_ }) -join ' '
+
+# Read existing state before building the report, so every problem is known in
+# time to appear in the banner at the top rather than buried at the bottom.
+$statePath = Join-Path $RunDir 'audit-state.json'
+$state = $null
+if (Test-Path $statePath) {
+    try { $state = Get-Content $statePath -Raw | ConvertFrom-Json }
+    catch {
+        # Overwriting a damaged state file with defaults would destroy the
+        # approval and remediation history it still contains.
+        $backup = "$statePath.damaged-$(Get-Date -Format yyyyMMdd-HHmmss)"
+        try { Copy-Item $statePath $backup -Force } catch {}
+        $problems.Add("audit-state.json could not be parsed; a copy was preserved at $(Split-Path -Leaf $backup). Approvals and remediation history were NOT carried forward.")
+    }
+}
 
 # ------------------------------------------------------------------ report --
 
@@ -147,6 +172,12 @@ $null = $md.AppendLine("**Computer:** $computer  ")
 $null = $md.AppendLine("**Windows:** $winDesc  ")
 $null = $md.AppendLine("**Generated:** $((Get-Date).ToString('u'))  ")
 $null = $md.AppendLine()
+if ($problems.Count) {
+    # A durable report that looks authoritative while resting on malformed or
+    # unverifiable input is the failure mode this whole skill argues against.
+    $null = $md.AppendLine("> **This report was generated with $($problems.Count) validation problem(s).** Treat the affected content as unverified until they are resolved. See *Report generation warnings* at the end.")
+    $null = $md.AppendLine()
+}
 $null = $md.AppendLine('## Dashboard')
 $null = $md.AppendLine()
 $null = $md.AppendLine('| State | Initial | Final |')
@@ -174,6 +205,18 @@ if ($unknowns.Count) {
     $null = $md.AppendLine()
     $null = $md.AppendLine("$($unknowns.Count) finding(s) are explicitly UNKNOWN rather than guessed. See the last section.")
 }
+# SKILL.md requires budget deferrals to be named in the report. Rendering them
+# only inside the per-finding block would bury exactly the thing an operator
+# needs to see when deciding whether the audit is actually finished.
+$deferred = @($findings | Where-Object { Get-Prop $_ 'budget_note' })
+if ($deferred.Count) {
+    $null = $md.AppendLine()
+    $null = $md.AppendLine("$($deferred.Count) item(s) were deliberately deferred to stay within budget:")
+    $null = $md.AppendLine()
+    foreach ($d in $deferred) {
+        $null = $md.AppendLine("- **$(Get-Prop $d 'id')** $(Get-Prop $d 'title') - $(Get-Prop $d 'budget_note')")
+    }
+}
 $null = $md.AppendLine()
 
 $null = $md.AppendLine('## Findings')
@@ -200,8 +243,10 @@ foreach ($f in @($findings | Sort-Object @{e={ $order[[string](Get-Prop $_ 'stat
     foreach ($pair in @(
         @{ Key='conclusion';            Label='Conclusion' },
         @{ Key='recommended_action';    Label='Action' },
+        @{ Key='approval';              Label='Approval' },
         @{ Key='verification';          Label='Verification' },
-        @{ Key='remaining_uncertainty'; Label='Remaining uncertainty / next test' }
+        @{ Key='remaining_uncertainty'; Label='Remaining uncertainty / next test' },
+        @{ Key='budget_note';           Label='Deferred for budget' }
     )) {
         $v = Get-Prop $f $pair.Key
         if ($v) { $null = $md.AppendLine("- **$($pair.Label):** $v") }
@@ -230,10 +275,6 @@ $reportPath = Join-Path $RunDir 'REPORT.md'
 
 # -------------------------------------------------------------- state file --
 
-$statePath = Join-Path $RunDir 'audit-state.json'
-$state = $null
-if (Test-Path $statePath) { try { $state = Get-Content $statePath -Raw | ConvertFrom-Json } catch {} }
-
 $out = [ordered]@{
     schema_version    = '1.1'
     run_id            = (Get-Prop $state 'run_id' (Split-Path -Leaf $RunDir))
@@ -256,4 +297,14 @@ Write-Host ''
 Write-Host "REPORT.md      $reportPath" -ForegroundColor Green
 Write-Host "audit-state    $statePath" -ForegroundColor Green
 Write-Host ("Dashboard      " + (($StateLabel.Keys | ForEach-Object { "$($StateGlyph[$_])$($finalCounts[$_])" }) -join ' ')) -ForegroundColor Cyan
-if ($problems.Count) { Write-Host "Warnings       $($problems.Count) (listed in REPORT.md)" -ForegroundColor Yellow }
+if ($problems.Count) { Write-Host "Warnings       $($problems.Count) (banner at the top of REPORT.md)" -ForegroundColor Yellow }
+
+# Still write the artifacts - a report with a warning banner beats no report at
+# a checkpoint - but exit non-zero so automation and the agent both notice.
+# Malformed findings must never pass silently at FINAL_VALIDATION.
+if ($findingProblemCount) {
+    Write-Host ''
+    Write-Host "$findingProblemCount finding(s) failed validation. The audit is not complete until they are fixed." -ForegroundColor Red
+    exit 1
+}
+exit 0

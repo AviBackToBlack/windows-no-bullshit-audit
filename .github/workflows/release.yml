@@ -63,10 +63,9 @@ jobs:
           # GitHub runners are already elevated, so the real gate is exercised.
           ./skills/windows-no-bullshit-audit/scripts/collect-baseline.ps1 `
             -OutputRoot "$env:RUNNER_TEMP\audit" -Depth Fast -EventDays 3 -NoZip -Redact
-          # The collector runs many native tools; a non-zero code from one of
-          # them is recorded in the journal, not a collector failure. Success is
-          # judged by the digest budget step, so clear the inherited code.
-          $global:LASTEXITCODE = 0
+          # The collector ends with an explicit exit 0, so this is its own status
+          # and not an inherited code from the last native tool it ran.
+          if ($LASTEXITCODE -ne 0) { throw "collector exited $LASTEXITCODE" }
 
       - name: Enforce the digest budget
         shell: pwsh
@@ -100,6 +99,38 @@ jobs:
           # means the collector broke.
           if ($failedProbes.Count -gt 8) { throw "too many failed probes ($($failedProbes.Count)) - collector is broken" }
 
+      - name: Digest cap is actually enforced, not merely attempted
+        shell: pwsh
+        run: |
+          # Regression test for the cap being advisory. Force a budget that no
+          # amount of trimming can meet and assert the collector refuses to ship
+          # a file named TRIAGE.json, while still leaving a usable TRIAGE.md.
+          $tiny = "$env:RUNNER_TEMP\audit-tiny"
+          ./skills/windows-no-bullshit-audit/scripts/collect-baseline.ps1 `
+            -OutputRoot $tiny -Depth Fast -EventDays 1 -NoZip -MaxTriageBytes 8000 | Out-Null
+          $code = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+
+          $run = (Get-ChildItem $tiny -Directory | Select-Object -First 1).FullName
+          $json      = Join-Path $run 'TRIAGE.json'
+          $oversized = Join-Path $run 'TRIAGE-OVERSIZED.json'
+          $md        = Join-Path $run 'TRIAGE.md'
+
+          if (Test-Path $json) {
+            throw "collector shipped TRIAGE.json at $((Get-Item $json).Length) bytes despite an 8000 byte cap"
+          }
+          if ($code -ne 75) { throw "expected exit 75 on budget overflow, got $code" }
+          if (-not (Test-Path $oversized)) { throw 'overflow data was lost instead of being written as TRIAGE-OVERSIZED.json' }
+          if (-not (Test-Path $md)) { throw 'TRIAGE.md must still be produced so a failed budget does not leave the operator with nothing' }
+
+          $t = Get-Content $oversized -Raw | ConvertFrom-Json
+          if (@($t.trimmed).Count -lt 1) { throw 'trimming was never attempted before declaring overflow' }
+          Write-Host "cap enforced: exit $code, $(@($t.trimmed).Count) trims recorded, TRIAGE.md still $((Get-Item $md).Length) bytes"
+
+          # And the normal budget must still fit without any trimming drama.
+          $t2 = Get-Content "$env:RUNNER_TEMP\audit\*\TRIAGE.json" -Raw | ConvertFrom-Json
+          if ($t2.digest_bytes -gt 60000) { throw 'default run exceeded the documented cap' }
+
       - name: Report assembler round trip
         shell: pwsh
         run: |
@@ -117,10 +148,25 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw 'validator accepted a critical finding with no action and no next test' }
           $global:LASTEXITCODE = 0
 
+          # Generation, not just -Validate, must fail on a malformed finding.
+          ./skills/windows-no-bullshit-audit/scripts/assemble-report.ps1 -RunDir $run | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'generation exited 0 despite an invalid finding' }
+          $global:LASTEXITCODE = 0
+          if ((Get-Content "$run\REPORT.md" -Raw) -notmatch 'validation problem') {
+            throw 'REPORT.md lacks the validation banner at the top'
+          }
+
           Remove-Item "$run\findings\F-002.json"
+          # budget_note must reach the report; SKILL.md requires deferrals to be named.
+          '{"id":"F-003","domain":"events","title":"deferred item","state":"observe","confidence":"LOW","budget_note":"deferred: 2 probes already spent"}' |
+            Set-Content "$run\findings\F-003.json"
           ./skills/windows-no-bullshit-audit/scripts/assemble-report.ps1 -RunDir $run
+          if ($LASTEXITCODE -ne 0) { throw "generation failed on valid findings ($LASTEXITCODE)" }
           if (-not (Test-Path "$run\REPORT.md")) { throw 'REPORT.md was not generated' }
           if (-not (Test-Path "$run\audit-state.json")) { throw 'audit-state.json was not generated' }
+          $report = Get-Content "$run\REPORT.md" -Raw
+          if ($report -notmatch 'deferred: 2 probes already spent') { throw 'budget_note never reached REPORT.md' }
+          if ($report -match 'validation problem') { throw 'stale validation banner on a clean run' }
           $global:LASTEXITCODE = 0
 
       - name: Upload smoke-test digest

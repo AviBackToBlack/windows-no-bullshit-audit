@@ -107,11 +107,17 @@ $arArgs  = @('-accepteula','-a','*','-x','-h','-s','-t')
 if ($VirusTotal) { $arArgs += @('-v','-vt') }
 
 $stderrPath = Join-Path $OutputDirectory 'autoruns-stderr.txt'
-$xmlText = & $exe @arArgs 2> $stderrPath
+
+# Stream the output straight into the file rather than materializing the whole
+# multi-MB document in a variable first. Autorunsc declares UTF-16 XML, and
+# explicit Unicode output keeps the declaration and the bytes on disk
+# consistent, so the encoding behaviour here is unchanged - only the memory
+# profile is. Do not "improve" this into a raw byte pipe without testing
+# against a real autorunsc: the declared encoding and the actual stdout
+# encoding have to agree, and getting that wrong silently corrupts the primary
+# evidence file.
+& $exe @arArgs 2> $stderrPath | Out-File -FilePath $xmlPath -Encoding Unicode -Width 1000000
 $code = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
-# Autorunsc declares UTF-16 XML. Explicit Unicode output keeps the declaration
-# and the bytes consistent.
-$xmlText | Out-File -FilePath $xmlPath -Encoding Unicode -Width 1000000
 
 [pscustomobject]@{
     Autorunsc=$exe; ExitCode=$code; VirusTotal=[bool]$VirusTotal
