@@ -1,49 +1,71 @@
 # Tooling and Web Research
 
-## Tool installation workflow
+## Missing tool
 
-When a required tool is missing, ask one compact question:
+Ask one compact question, batched with other work, never as a turn of its own:
 
-> I need <tool> for <reason>. I can install it from an official Microsoft/vendor source, or you can install it manually and tell me the path. Which do you prefer?
+> I need <tool> for <reason>. I can install it from an official
+> Microsoft/vendor source, or you can install it manually and give me the path.
+> Which do you prefer?
 
-Continue independent audit work while awaiting the answer.
+Acquisition order: already installed, then Microsoft Store / WinGet / official
+Microsoft package, then official OEM/vendor package, then manual operator
+installation from the official source.
 
-Preferred acquisition order:
+Never use an unofficial mirror. If automatic official installation fails, give
+manual official instructions.
 
-1. already installed tool;
-2. Microsoft Store / WinGet / official Microsoft package;
-3. official OEM/vendor package;
-4. manual operator installation from the official source.
+## Optional tools
 
-Do not use unofficial mirrors.
+- **Sysinternals Autoruns** - deep autostart, service, driver, task and shell
+  extension archaeology. Use `autorunsc` with XML output via
+  `scripts/collect-autoruns.ps1`.
+- **Windows Performance Recorder / Analyzer** - bounded ETW traces, and WPA when
+  stack or timeline analysis is genuinely needed.
+- **Vendor diagnostics** - only when local evidence has already identified a
+  specific component and the official utility adds telemetry Windows does not
+  expose (firmware, SMART detail, UPS state).
 
-## Recommended optional tools
+## Web research: when
 
-### Sysinternals Autoruns
+Research when the conclusion depends on current facts:
 
-Use for deep autostart/service/driver/task/shell-extension archaeology. Prefer command-line `Autorunsc` and XML output.
+- current Windows behaviour or documented design;
+- driver, firmware or software versions;
+- vendor support status and replacement products;
+- known issues and advisories;
+- device-specific maintenance guidance;
+- current security recommendations.
 
-### Windows Performance Recorder / Analyzer
+Never claim a current version, support status, firmware recommendation or known
+issue from model memory when web access exists.
 
-Use WPR for bounded ETW traces. Use WPA when deeper stack/timeline analysis is needed.
+## Web research: how much
 
-### Vendor diagnostics
+Research is not free either. Budget it.
 
-Use only when local evidence identifies a specific hardware/software component and the official utility adds relevant telemetry (firmware, SMART, UPS state, etc.).
+- Default: **at most 2 searches per finding**, and read at most one primary
+  source per claim.
+- Search the exact identifier: exact model or device ID, exact driver/software
+  version, exact Windows build. Vague searches return vague tokens.
+- Cache verdicts in `research-cache.json` keyed by component and version. Never
+  research the same driver twice in one audit.
+- Do not fetch a whole vendor page when the release-notes fragment answers the
+  question.
 
-## Web research rules
+## Source priority
 
-Search current sources for:
+1. Microsoft official documentation and support
+2. OEM / hardware / software vendor official sources
+3. official project documentation and repositories
+4. reputable technical sources
+5. community reports, as supporting evidence only
 
-- exact model/device ID when support or firmware matters;
-- exact installed software/driver version;
-- exact Windows build when behavior may be build-specific;
-- official release notes/advisories;
-- replacement software for discontinued products;
-- current supported OS/architecture.
+Keep `LOCAL EVIDENCE`, `WEB EVIDENCE` and `INFERENCE` conceptually separate, and
+cite sources for current-version and support claims in the report.
 
-Prefer primary sources. Cite current-version/support claims in the final report.
+## Offline
 
-## Offline behavior
-
-If internet access is unavailable, continue local evidence collection but mark current-version/support/known-issue checks as `INCOMPLETE`. Do not substitute old model memory as if it were current research.
+If there is no internet access, continue local collection but mark
+current-version, support-status and known-issue checks as `INCOMPLETE`. Do not
+present old model memory as current research.

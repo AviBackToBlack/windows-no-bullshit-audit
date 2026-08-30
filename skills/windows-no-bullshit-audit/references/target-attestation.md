@@ -2,63 +2,73 @@
 
 ## Purpose
 
-Never confuse the environment that can execute commands with the Windows 11 machine the operator actually wants audited.
+Never confuse the environment that can execute commands with the Windows 11
+machine the operator wants audited. A cloud sandbox, helper VM, container,
+remote shell host or local agent runtime can all expose shell and file access.
+Capability is not identity.
 
-A cloud sandbox, helper VM, container, remote shell host, or local Work runtime may all expose shell/file capabilities. Capability alone is not proof of target identity.
+## Probe
 
-## Mandatory rule
+Run `scripts/attest-target.ps1` when the current execution environment is
+Windows. It deliberately does **not** require administrator rights, because
+proving "this is the wrong machine" must work everywhere, including in a locked
+down sandbox.
 
-Before broad evidence collection, establish and confirm the audit target.
+It reports computer name, Windows edition/build/architecture,
+manufacturer/model, current and interactive user, system drive, virtualization
+indicators, elevation state and PowerShell edition/path.
 
-The candidate identity should include, at minimum:
+It does not collect serial numbers, product keys or licence identifiers.
+Identity does not require them.
 
-- computer name;
-- Windows edition/build and architecture;
-- manufacturer/model;
-- current and interactive user where available;
-- system drive;
-- virtualization indicators;
-- execution environment basics such as PowerShell edition/path.
-
-Use `scripts/attest-target.ps1` when the current execution environment is Windows.
-
-Do not collect serial numbers, product keys, or other unnecessary unique identifiers for attestation.
+Use `-Redact` when the output will be pasted into a hosted chat.
 
 ## Decision
 
-Classify locality as one of:
+Classify locality as exactly one of:
 
-- `CONFIRMED_TARGET` — operator confirms the candidate identity is the Windows 11 machine to audit.
-- `NOT_TARGET` — execution is clearly in a sandbox/cloud/helper environment or the operator says it is the wrong machine.
-- `UNCONFIRMED` — identity is available but has not yet been confirmed.
-- `UNAVAILABLE` — current environment cannot attest the target directly.
+- `CONFIRMED_TARGET` - the operator confirms this is the machine to audit.
+- `NOT_TARGET` - execution is in a sandbox/cloud/helper environment, or the
+  operator says it is the wrong machine.
+- `UNCONFIRMED` - identity is known but not yet confirmed.
+- `UNAVAILABLE` - this environment cannot attest the target at all.
 
-A virtual machine is not automatically the wrong target. If the operator intends to audit that VM, it is valid.
+A virtual machine is not automatically wrong. If the operator intends to audit
+that VM, it is the target.
 
-## Efficient first-turn confirmation
+## One round trip, not three
 
-Do not create a separate conversational round trip for target identity and another for pre-flight safety.
+Do not spend separate turns on target identity, safety confirmation and the
+elevation requirement. When local attestation succeeds, combine them:
 
-When local Windows attestation succeeds, combine them:
+> I am about to audit `<computer>` - `<Windows edition/build>`,
+> `<manufacturer/model>`. Confirm this is the intended target, that important
+> work is saved and closed, and note that collection needs an **administrator**
+> Terminal. The fast pass takes a couple of minutes.
 
-> I am about to audit `<computer>` — `<Windows edition/build>`, `<manufacturer/model>`. Confirm that this is the intended target and that all important work is saved/closed before the audit proceeds.
+That single message satisfies target confirmation, the pre-flight safety gate
+and the elevation contract.
 
-This single confirmation satisfies both target confirmation and the mandatory pre-flight gate.
-
-## Sandbox/cloud fallback
+## Sandbox / cloud fallback
 
 If the command environment is not the intended Windows target:
 
 1. do **not** run the baseline collector against the sandbox;
-2. do **not** create a Windows health verdict from sandbox evidence;
+2. do **not** produce a Windows health verdict from sandbox evidence;
 3. switch to delegated mode;
-4. give the operator `scripts/attest-target.ps1` plus the baseline collector to run on the intended Windows 11 host;
+4. give the operator `scripts/attest-target.ps1` and then
+   `scripts/collect-baseline.ps1`, and ask for `TRIAGE.md` back;
 5. analyze only evidence returned from that host.
 
-It is acceptable to use the sandbox for parsing, web research, report generation, or other helper work, but label that work as helper execution and never mix its system state with target evidence.
+The sandbox may still parse returned evidence, run web research and generate
+reports. Label that as helper execution and never mix its system state with
+target evidence.
 
-## Evidence provenance
+## Provenance
 
-Every local evidence item should be attributable to the confirmed target run. If multiple machines appear in a conversation, preserve target identity in filenames/state and never merge their findings.
+Every local evidence item must be attributable to the confirmed target run.
+`TRIAGE.json` carries `target` and `run_id` for exactly this reason. If several
+machines appear in one conversation, keep their findings separate.
 
-If target identity changes unexpectedly mid-run, stop mutation work, mark locality `UNCONFIRMED`, checkpoint state, and re-attest before proceeding.
+If target identity changes unexpectedly mid-run: stop all mutation work,
+checkpoint, set locality to `UNCONFIRMED`, and re-attest before continuing.

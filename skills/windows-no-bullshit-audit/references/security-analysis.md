@@ -1,62 +1,61 @@
 # Security Analysis
 
-## Model
+Load only when a security finding exists. Code Integrity triage is doctrine item
+6 in `diagnostic-doctrine.md` and is not repeated here.
 
-Security findings must consider four things:
+## The model
 
-1. observed state;
+A security finding is not "differs from Microsoft default". It is the
+combination of:
+
+1. observed effective state;
 2. current Microsoft/vendor recommendation;
 3. compatibility evidence;
 4. operator intent.
 
-A setting that differs from Microsoft's default/recommendation may be intentional and necessary.
+A setting that deviates from the default may be intentional and necessary.
 
-## Do not auto-enforce
+## Never auto-enforce
 
-Never silently enable/disable:
+Do not silently enable or disable:
 
-- BitLocker/device encryption;
+- BitLocker / device encryption;
 - Secure Boot;
-- TPM provisioning/clearing;
-- VBS/Device Guard/HVCI/Memory Integrity;
+- TPM provisioning or clearing;
+- VBS / Device Guard / HVCI / Memory Integrity;
 - Smart App Control;
 - LSA protection;
-- Defender real-time/cloud/tamper protection;
-- firewall policy/profiles;
-- credential/security policy.
+- Defender real-time, cloud or tamper protection;
+- firewall policy or profiles;
+- credential or security policy.
+
+Report the state and the tradeoff. The operator decides.
 
 ## Intentional deviations
 
-If the operator deliberately disabled a feature for a known compatibility requirement:
+When a feature was deliberately disabled for a known compatibility requirement:
 
-- verify that the feature is actually in the stated state;
-- research the current compatibility/security tradeoff;
-- classify as 🟡 `INTENTIONAL` unless there is separate evidence of active risk;
-- document the reason;
-- optionally suggest safer alternatives or newer compatible software/hardware without forcing the change.
+- verify the feature really is in the stated state, not assumed to be;
+- research the current compatibility and security tradeoff;
+- classify as `INTENTIONAL` unless there is separate evidence of active risk;
+- document the reason in the finding;
+- optionally suggest safer alternatives or newer compatible hardware/software,
+  without forcing the change.
 
-## Code Integrity
+## Defender
 
-Do not treat every Code Integrity error as Windows corruption.
-
-Determine whether the event is:
-
-- a kernel-mode driver load/signature failure;
-- a protected-process signing-level block;
-- an application DLL/module issue;
-- a historical component that is no longer present;
-- policy behavior working as designed.
-
-Cross-check current file presence, signature, product owner, process context, and recurrence.
-
-## Defender findings
-
-Distinguish:
+Distinguish clearly between:
 
 - current threat detections;
 - stale detection history;
-- explicit exclusions;
-- platform/signature freshness;
+- explicit exclusions (these are a finding in their own right - an exclusion the
+  operator does not remember adding deserves a question);
+- platform and signature freshness;
 - protection feature state.
 
-Do not expose secrets or sensitive file content in reports unnecessarily.
+## Reporting
+
+Do not put secrets, recovery keys, certificate private material or sensitive
+file contents into reports. `TRIAGE.md` may be pasted into a hosted chat; assume
+anything in a report is going somewhere you do not control. `-Redact` exists for
+this.
