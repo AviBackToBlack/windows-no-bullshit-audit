@@ -10,14 +10,14 @@ $ErrorActionPreference='Continue'
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 
 # Language-independent CIM performance snapshots, one per second.
-$samples=New-Object System.Collections.Generic.List[object]
+$samples=New-Object System.Collections.ArrayList
 for($i=0;$i -lt $Seconds;$i++){
     try{
         $cpu=Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop
         $sys=Get-CimInstance Win32_PerfFormattedData_PerfOS_System -ErrorAction Stop
         $mem=Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop
         $disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction SilentlyContinue
-        $samples.Add([pscustomobject]@{Timestamp=(Get-Date).ToString('o');CPUPercent=$cpu.PercentProcessorTime;DPCPercent=$cpu.PercentDPCTime;InterruptPercent=$cpu.PercentInterruptTime;ProcessorQueueLength=$sys.ProcessorQueueLength;AvailableMBytes=$mem.AvailableMBytes;PagesPerSec=$mem.PagesPersec;DiskReadBytesPerSec=$disk.DiskReadBytesPersec;DiskWriteBytesPerSec=$disk.DiskWriteBytesPersec;DiskQueue=$disk.CurrentDiskQueueLength;PercentDiskTime=$disk.PercentDiskTime})
+        $null = $samples.Add([pscustomobject]@{Timestamp=(Get-Date).ToString('o');CPUPercent=$cpu.PercentProcessorTime;DPCPercent=$cpu.PercentDPCTime;InterruptPercent=$cpu.PercentInterruptTime;ProcessorQueueLength=$sys.ProcessorQueueLength;AvailableMBytes=$mem.AvailableMBytes;PagesPerSec=$mem.PagesPersec;DiskReadBytesPerSec=$disk.DiskReadBytesPersec;DiskWriteBytesPerSec=$disk.DiskWriteBytesPersec;DiskQueue=$disk.CurrentDiskQueueLength;PercentDiskTime=$disk.PercentDiskTime})
     }catch{}
     Start-Sleep -Seconds 1
 }
