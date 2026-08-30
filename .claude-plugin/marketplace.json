@@ -1,0 +1,15 @@
+{
+  "name": "windows-no-bullshit-audit",
+  "owner": {
+    "name": "AviBackToBlack",
+    "url": "https://github.com/AviBackToBlack"
+  },
+  "description": "Windows No-Bullshit Audit plugin marketplace",
+  "plugins": [
+    {
+      "name": "windows-no-bullshit-audit",
+      "source": "./",
+      "description": "Deep Windows 11 health, performance, security and hygiene audit. Evidence first. No cargo-cult fixes."
+    }
+  ]
+}

@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/windows-no-bullshit-audit/audit-state.schema.json",
+  "title": "Windows No-Bullshit Audit State",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "phase",
+    "target_attestation",
+    "findings",
+    "pending_approvals",
+    "remediations"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "phase": {
+      "type": "string"
+    },
+    "computer": {
+      "type": "string"
+    },
+    "windows": {
+      "type": "object"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string"
+    },
+    "preflight_confirmed": {
+      "type": "boolean"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "domain",
+          "title",
+          "state",
+          "confidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "healthy",
+              "observe",
+              "action",
+              "critical",
+              "historical"
+            ]
+          },
+          "confidence": {
+            "enum": [
+              "HIGH",
+              "MEDIUM",
+              "LOW",
+              "UNKNOWN"
+            ]
+          },
+          "local_evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "lifecycle_context": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "external_evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "conclusion": {
+            "type": "string"
+          },
+          "recommended_action": {
+            "type": "string"
+          },
+          "verification": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "pending_approvals": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "remediations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "checkpoints": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "target_attestation": {
+      "type": "object",
+      "required": [
+        "locality_status",
+        "operator_confirmed"
+      ],
+      "properties": {
+        "locality_status": {
+          "enum": [
+            "CONFIRMED_TARGET",
+            "NOT_TARGET",
+            "UNCONFIRMED",
+            "UNAVAILABLE"
+          ]
+        },
+        "operator_confirmed": {
+          "type": "boolean"
+        },
+        "computer_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "os_caption": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "os_build": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edition_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "os_architecture": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "manufacturer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "system_drive": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "likely_virtualized": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "evidence_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

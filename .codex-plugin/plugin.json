@@ -1,0 +1,39 @@
+{
+  "name": "windows-no-bullshit-audit",
+  "version": "0.1.1",
+  "description": "Deep Windows 11 health, performance, security and hygiene audit. Evidence first. No cargo-cult fixes.",
+  "author": {
+    "name": "AviBackToBlack",
+    "url": "https://github.com/AviBackToBlack"
+  },
+  "homepage": "https://github.com/AviBackToBlack/windows-no-bullshit-audit",
+  "repository": "https://github.com/AviBackToBlack/windows-no-bullshit-audit",
+  "license": "MIT",
+  "keywords": [
+    "windows-11",
+    "health-audit",
+    "performance",
+    "security",
+    "diagnostics",
+    "event-log",
+    "etw"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Windows No-Bullshit Audit",
+    "shortDescription": "Evidence-first deep Windows 11 audit",
+    "longDescription": "Deep Windows 11 health, reliability, storage, driver, event-log, boot, recovery, power, network, security, performance, and software-hygiene audit with evidence-driven remediation and verification.",
+    "developerName": "AviBackToBlack",
+    "category": "Utilities",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Run a maximum evidence-first audit of this Windows 11 PC.",
+      "Audit this Windows PC and explain every important finding.",
+      "Check this Windows 11 PC for health, performance, security, and hygiene."
+    ]
+  }
+}
