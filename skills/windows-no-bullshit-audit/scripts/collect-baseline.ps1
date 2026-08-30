@@ -260,14 +260,18 @@ function Invoke-PSCapture {
     $result = $null
     try {
         $result = & $ScriptBlock
-        # A probe that legitimately finds nothing must still produce a file,
-        # otherwise "empty" and "never ran" become indistinguishable later.
-        if ($null -eq $result) { $result = @() }
+        # A probe that finds nothing must still produce a file, otherwise
+        # "empty" and "never ran" become indistinguishable on disk. But do NOT
+        # coerce $result itself: callers use $null to mean "this probe did not
+        # work", and turning that into an empty array made a failed Get-Tpm
+        # report tpm_present=False instead of unknown. Missing data must never
+        # read as clean data.
+        $forFile = if ($null -eq $result) { @() } else { $result }
         switch ($Format) {
-            'Csv'    { if (@($result).Count) { $result | Export-Csv -Path $out -NoTypeInformation -Encoding UTF8 } else { '' | Out-File -FilePath $out -Encoding utf8 } }
-            'Json'   { $result | ConvertTo-Json -Depth 10 | Out-File -FilePath $out -Encoding utf8 -Width 4096 }
-            'Clixml' { $result | Export-Clixml -Path $out -Depth 8 }
-            default  { $result | Out-File -FilePath $out -Encoding utf8 -Width 4096 }
+            'Csv'    { if (@($forFile).Count) { $forFile | Export-Csv -Path $out -NoTypeInformation -Encoding UTF8 } else { '' | Out-File -FilePath $out -Encoding utf8 } }
+            'Json'   { $forFile | ConvertTo-Json -Depth 10 | Out-File -FilePath $out -Encoding utf8 -Width 4096 }
+            'Clixml' { $forFile | Export-Clixml -Path $out -Depth 8 }
+            default  { $forFile | Out-File -FilePath $out -Encoding utf8 -Width 4096 }
         }
     } catch {
         $status='ERROR'; $note=$_.Exception.Message
@@ -989,7 +993,7 @@ $triage = [ordered]@{
         ram_gb          = [math]::Round([double](Get-Prop $cs 'TotalPhysicalMemory' 0)/1GB,1)
         bios_version    = (Get-Prop $bios 'SMBIOSBIOSVersion')
         bios_date       = $(try { (Get-Prop $bios 'ReleaseDate').ToString('yyyy-MM-dd') } catch { $null })
-        virtualized     = [bool](Get-Prop $cs 'HypervisorPresent' $false)
+        virtualized     = (Get-Prop $cs 'HypervisorPresent')
         uptime_hours    = $uptimeHours
     }
 
@@ -1019,8 +1023,12 @@ $triage = [ordered]@{
         uac_enabled            = $uacEnabled
         lsa_protection         = $runAsPPL
         hvci_running           = $hvciRunning
-        tpm_present            = $(if ($null -eq $tpm) { $null } else { [bool](Get-Prop $tpm 'TpmPresent' $false) })
-        tpm_ready              = $(if ($null -eq $tpm) { $null } else { [bool](Get-Prop $tpm 'TpmReady' $false) })
+        # No $false default. Get-Tpm succeeds un-elevated but returns empty
+        # properties, so defaulting turned "cannot tell" into a confident
+        # "no TPM present" - a security-relevant field reading as a real
+        # negative when it was actually unknown.
+        tpm_present            = (Get-Prop $tpm 'TpmPresent')
+        tpm_ready              = (Get-Prop $tpm 'TpmReady')
         defender_realtime      = (Get-Prop $defender 'RealTimeProtectionEnabled')
         defender_tamper        = (Get-Prop $defender 'IsTamperProtected')
         defender_signature_age = (Get-Prop $defender 'AntivirusSignatureAge')
