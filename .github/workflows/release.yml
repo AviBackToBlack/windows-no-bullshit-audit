@@ -102,12 +102,14 @@ jobs:
       - name: Digest cap is actually enforced, not merely attempted
         shell: pwsh
         run: |
-          # Regression test for the cap being advisory. Force a budget that no
-          # amount of trimming can meet and assert the collector refuses to ship
-          # a file named TRIAGE.json, while still leaving a usable TRIAGE.md.
+          # Regression test for the cap being advisory. The budget must be below
+          # the irreducible core on ANY machine, otherwise this silently tests
+          # nothing - which is exactly what happened at 8000 bytes, where a bare
+          # CI runner's digest fits at 7680. 1000 cannot be met by a digest that
+          # still contains a target block.
           $tiny = "$env:RUNNER_TEMP\audit-tiny"
           ./skills/windows-no-bullshit-audit/scripts/collect-baseline.ps1 `
-            -OutputRoot $tiny -Depth Fast -EventDays 1 -NoZip -MaxTriageBytes 8000 | Out-Null
+            -OutputRoot $tiny -Depth Fast -EventDays 1 -NoZip -MaxTriageBytes 1000 | Out-Null
           $code = $LASTEXITCODE
           $global:LASTEXITCODE = 0
 
@@ -125,7 +127,19 @@ jobs:
 
           $t = Get-Content $oversized -Raw | ConvertFrom-Json
           if (@($t.trimmed).Count -lt 1) { throw 'trimming was never attempted before declaring overflow' }
-          Write-Host "cap enforced: exit $code, $(@($t.trimmed).Count) trims recorded, TRIAGE.md still $((Get-Item $md).Length) bytes"
+
+          # The Markdown budget must hold too, including the space taken by its
+          # own truncation notice - appending that after measuring is the same
+          # mistake that made the JSON cap advisory in the first place.
+          $mdCap = [int](1000 * 0.75)
+          $mdSize = (Get-Item $md).Length
+          if ($mdSize -gt $mdCap) { throw "TRIAGE.md is $mdSize bytes, over its $mdCap byte budget" }
+
+          # The irreducible core must survive even the most aggressive trimming.
+          foreach ($key in @('target','collection','flags','counters')) {
+            if (-not $t.PSObject.Properties[$key]) { throw "trimming destroyed the '$key' core section" }
+          }
+          Write-Host "cap enforced: exit $code, $(@($t.trimmed).Count) trims, TRIAGE.md $mdSize b within $mdCap b"
 
           # And the normal budget must still fit without any trimming drama.
           $t2 = Get-Content "$env:RUNNER_TEMP\audit\*\TRIAGE.json" -Raw | ConvertFrom-Json

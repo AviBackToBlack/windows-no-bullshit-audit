@@ -101,11 +101,11 @@
       "required": ["id", "action", "reason", "risk", "status"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
-        "action": { "type": "string" },
-        "reason": { "type": "string" },
+        "action": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
         "risk": { "enum": ["low", "medium", "high"] },
-        "rollback": { "type": "string" },
-        "finding_id": { "type": "string" },
+        "rollback": { "type": "string", "minLength": 1 },
+        "finding_id": { "type": "string", "minLength": 1 },
         "status": { "enum": ["pending", "approved", "denied", "withdrawn"] }
       }
     },
@@ -113,16 +113,16 @@
       "type": "object",
       "required": ["timestamp", "finding_id", "action", "result"],
       "properties": {
-        "timestamp": { "type": "string" },
-        "finding_id": { "type": "string" },
-        "before": { "type": "string" },
-        "action": { "type": "string" },
-        "approval_id": { "type": "string" },
-        "reason": { "type": "string" },
-        "result": { "type": "string" },
+        "timestamp": { "type": "string", "minLength": 1 },
+        "finding_id": { "type": "string", "minLength": 1 },
+        "before": { "type": "string", "minLength": 1 },
+        "action": { "type": "string", "minLength": 1 },
+        "approval_id": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "result": { "type": "string", "minLength": 1 },
         "exit_code": { "type": ["integer", "null"] },
         "verification": { "type": "string", "minLength": 1 },
-        "rollback": { "type": "string" }
+        "rollback": { "type": "string", "minLength": 1 }
       }
     },
     "attestation": {

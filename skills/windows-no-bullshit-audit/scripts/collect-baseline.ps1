@@ -55,6 +55,14 @@
   trimmed in a documented order until the digest fits, and every trim is
   recorded in the digest itself.
 
+  If trimming cannot reach the cap, the digest is written as
+  TRIAGE-OVERSIZED.json instead of TRIAGE.json and the script exits 75.
+  TRIAGE.md is still produced within its own budget, so a failed cap never
+  leaves you with nothing after a multi-minute collection.
+
+  Values far below the default cannot be met by any real machine and exist so
+  the overflow path can be tested.
+
 .PARAMETER NoZip
   Do not make a ZIP of the raw evidence.
 
@@ -74,7 +82,10 @@ param(
     [ValidateRange(100,200000)][int]$MaxEventsPerLog = 20000,
     [switch]$Redact,
     [switch]$CopyToClipboard,
-    [ValidateRange(8000,400000)][int]$MaxTriageBytes = 60000,
+    # Lower bound is 1000 rather than something "sensible" so the overflow path
+    # is actually testable. A real digest can never fit that, which is the
+    # point: CI can force the failure deterministically on any machine.
+    [ValidateRange(1000,400000)][int]$MaxTriageBytes = 60000,
     [switch]$NoZip
 )
 
@@ -1290,18 +1301,27 @@ $mdText = $md.ToString()
 $mdBudget = [int]($MaxTriageBytes * 0.75)
 $mdBytes = [Text.Encoding]::UTF8.GetByteCount($mdText)
 if ($mdBytes -gt $mdBudget) {
-    $keepChars = [int]($mdBudget * 0.92)
-    if ($keepChars -lt $mdText.Length) {
-        $mdText = $mdText.Substring(0, $keepChars) + @"
+    $notice = @"
 
 ---
 
-> **This digest was truncated at $mdBudget bytes** to protect the context budget.
+> **This digest was truncated to stay within $mdBudget bytes.**
 > The full structured digest is TRIAGE.json in the evidence root. Sections after
 > this point are missing, not empty - query the raw evidence for them.
 "@
+    # Reserve room for the notice before cutting. Appending it afterwards is
+    # exactly the measure-then-append mistake that made the JSON cap advisory.
+    $noticeBytes = [Text.Encoding]::UTF8.GetByteCount($notice)
+    $keepBytes = $mdBudget - $noticeBytes
+    if ($keepBytes -lt 200) {
+        # Budget too small for prose. Emit the pointer and nothing else.
+        $mdText = $notice.TrimStart()
+    } else {
+        $keep = [math]::Min($mdText.Length, $keepBytes)
+        while ($keep -gt 0 -and [Text.Encoding]::UTF8.GetByteCount($mdText.Substring(0, $keep)) -gt $keepBytes) { $keep-- }
+        $mdText = $mdText.Substring(0, $keep) + $notice
     }
-    $Warnings.Add("TRIAGE.md exceeded $mdBudget bytes and was truncated. Use TRIAGE.json for the complete digest.")
+    $Warnings.Add("TRIAGE.md exceeded $mdBudget bytes and was truncated. Use the structured digest for the complete picture.")
 }
 [IO.File]::WriteAllText((Join-Path $RunDir 'TRIAGE.md'), $mdText, (New-Object Text.UTF8Encoding($false)))
 
