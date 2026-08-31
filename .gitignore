@@ -1,6 +1,32 @@
+# Release artifacts
 dist/
+
+# Python caches / local environments
 __pycache__/
 *.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local audit/scratch output
+audit-output/
+.audit/
+
+# Editors / temporary files
+.vscode/
+.idea/
 *.tmp
+*.temp
+*.log
+*.bak
+*.swp
+*~
+
+# OS metadata
 .DS_Store
 Thumbs.db
+Desktop.ini
