@@ -2,10 +2,10 @@
 name: windows-no-bullshit-audit
 description: Deep Windows 11 health, performance, security, reliability, storage, driver, event-log, boot/recovery, power, network, software-hygiene and autostart audit. Use when asked to inspect, troubleshoot, diagnose, validate, optimize, clean up or repair a Windows 11 PC - including vaguer requests like "my PC is slow", "it keeps freezing", "random restarts", "blue screen / BSOD", "check if this machine is healthy", "why is boot so slow", "clean up startup programs". Covers DISM/SFC, CHKDSK, WHEA, WER/dumps, PnP, minifilters, Code Integrity, VSS/WinRE, services/tasks/startup, Autoruns and WPR/ETW. Evidence first. No cargo-cult fixes. Token-budgeted.
 license: MIT
+compatibility: "Windows 11 Home/Pro/Enterprise/Education, x64 or ARM64. Windows PowerShell 5.1. Collectors require an elevated session. Internet access expected for current vendor research."
 metadata:
-  version: "0.2.0"
+  version: "0.2.1"
   scope: "windows-11-client"
-  compatibility: "Windows 11 Home/Pro/Enterprise/Education, x64 or ARM64. Windows PowerShell 5.1. Collectors require an elevated session. Internet access expected for current vendor research."
 ---
 
 # Windows No-Bullshit Audit

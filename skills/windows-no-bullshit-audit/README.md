@@ -2,7 +2,7 @@
 
 > Deep Windows 11 health, performance, security and hygiene audit. Evidence first. No cargo-cult fixes. Token-budgeted.
 
-Version 0.2.0. Agent Skills package: `SKILL.md`, PowerShell collectors, focused
+Version 0.2.1. Agent Skills package: `SKILL.md`, PowerShell collectors, focused
 diagnostic references, state/report templates and quality gates.
 
 ## Scope

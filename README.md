@@ -33,14 +33,21 @@ The digest byte cap is enforced in CI against a real collector run, so it cannot
 
 ## Privacy
 
-Digests are meant to be pasted into a hosted chat. `-Redact` pseudonymizes computer name, user names, serial numbers, MAC and IP addresses and profile paths in the digest, while raw on-disk evidence stays diagnostically complete. Secret scrubbing of command lines runs unconditionally. Crash dumps are inventoried, never copied; servicing logs are copied only when a scan actually reported corruption.
+Digests are meant to be pasted into a hosted chat. `-Redact` pseudonymizes computer name, user names, serial numbers, MAC addresses and profile paths in the digest, while raw on-disk evidence stays diagnostically complete. Dotted-quad values are intentionally not blanket-redacted because a version such as `1.54.0.120` is syntactically indistinguishable from IPv4; the digest does not include network configuration, but event text can still contain IP-like values. Secret scrubbing of command lines runs unconditionally. Crash dumps are inventoried, never copied; servicing logs are copied only when a scan actually reported corruption.
 
 ## OpenAI plugin installation from GitHub
 
 Native OpenAI plugin manifest at `.codex-plugin/plugin.json`, repo marketplace at `.agents/plugins/marketplace.json`.
 
+Normal installation:
+
 ```bash
 codex plugin marketplace add AviBackToBlack/windows-no-bullshit-audit
+```
+
+For development/testing, pin the marketplace source to `main` instead:
+
+```bash
 codex plugin marketplace add AviBackToBlack/windows-no-bullshit-audit --ref main
 ```
 
@@ -94,7 +101,7 @@ Python 3 standard library is sufficient for the packager:
 
 ```bash
 python scripts/build-release.py
-python scripts/build-release.py --tag v0.2.0
+python scripts/build-release.py --tag v0.2.1
 ```
 
 The build validates the Skill, checks manifest identity/version consistency, runs the package validator, and produces deterministic ZIP bytes.
