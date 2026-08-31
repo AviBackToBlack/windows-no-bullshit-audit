@@ -62,8 +62,43 @@ def field(name: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+def single_line_string_field(name: str) -> str | None:
+    """Parse enough YAML scalar syntax to validate portable string fields.
+
+    The package intentionally has no PyYAML dependency. Portable frontmatter
+    fields are kept to one line; reject collection/block forms and obvious YAML
+    implicit non-string scalars rather than pretending our regex is a YAML parser.
+    """
+    raw = field(name)
+    if raw is None:
+        return None
+    if raw.startswith(("[", "{", "|", ">")):
+        errs.append(f"{name} must be a single-line string")
+        return None
+    if raw.startswith('"'):
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            errs.append(f"{name} has invalid double-quoted string syntax")
+            return None
+        if not isinstance(value, str):
+            errs.append(f"{name} must be a string")
+            return None
+        return value
+    if raw.startswith("'"):
+        if len(raw) < 2 or not raw.endswith("'"):
+            errs.append(f"{name} has invalid single-quoted string syntax")
+            return None
+        return raw[1:-1].replace("''", "'")
+    if re.fullmatch(r"(?i:true|false|null|~|[-+]?(?:\d+(?:\.\d*)?|\.\d+))", raw):
+        errs.append(f"{name} must be a string")
+        return None
+    return raw
+
+
 name = field("name")
 desc = field("description")
+compat = single_line_string_field("compatibility")
 
 if not name:
     errs.append("missing name")
@@ -80,9 +115,15 @@ if not desc:
 elif len(desc) > 1024:
     errs.append(f"description >1024 chars ({len(desc)})")
 
+if field("compatibility") is not None:
+    if compat is not None and not compat.strip():
+        errs.append("compatibility must not be empty")
+    elif compat is not None and len(compat) > 500:
+        errs.append(f"compatibility >500 chars ({len(compat)})")
+
 # Only these top-level frontmatter keys are recognized by both Claude Code and
 # Codex. Anything else risks a warning under `claude plugin validate --strict`.
-ALLOWED_FM_KEYS = {"name", "description", "license", "allowed-tools", "metadata"}
+ALLOWED_FM_KEYS = {"name", "description", "license", "compatibility", "allowed-tools", "metadata"}
 top_keys = set(re.findall(r"(?m)^([A-Za-z][A-Za-z0-9_-]*):", fm))
 for key in sorted(top_keys - ALLOWED_FM_KEYS):
     errs.append(f"unrecognized top-level frontmatter key '{key}' (nest it under metadata:)")

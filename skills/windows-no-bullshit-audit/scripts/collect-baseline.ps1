@@ -574,17 +574,14 @@ foreach ($log in @('System','Application')) {
     try {
         $filter = @{LogName=$log;StartTime=$Since;Level=1,2,3}
         $batch = @(Get-WinEvent -FilterHashtable $filter -MaxEvents $MaxEventsPerLog -ErrorAction Stop)
-        # Get-WinEvent returns the NEWEST N and says nothing about the rest, so
-        # a busy log would silently lose its oldest faults and hand us a
-        # first-seen date that is simply wrong. Cost one extra count query to
-        # find out, and label the window instead of pretending it is complete.
+        # Get-WinEvent returns the NEWEST N and says nothing about the rest. If
+        # the bounded query fills the cap, treat the window as truncated rather
+        # than issuing an unbounded second query just to count the remainder.
         if ($batch.Count -ge $MaxEventsPerLog) {
-            $total = $null
-            try { $total = @(Get-WinEvent -FilterHashtable $filter -ErrorAction Stop).Count } catch {}
             $truncatedLogs += [pscustomobject]@{
-                Log = $log; Returned = $batch.Count; Available = $total; Cap = $MaxEventsPerLog
+                Log = $log; Returned = $batch.Count; Cap = $MaxEventsPerLog
             }
-            $Warnings.Add("$log hit the $MaxEventsPerLog event cap. Counts are lower bounds and first-seen dates are not the true earliest occurrence.")
+            $Warnings.Add("$log hit the $MaxEventsPerLog event cap. At least $MaxEventsPerLog matching events exist; counts are lower bounds and first-seen dates are not the true earliest occurrence.")
         }
         $allEvents += $batch
     } catch {
@@ -1277,7 +1274,7 @@ if (@($Trimmed).Count -or @($failedProbes).Count -or @($nonZeroProbes).Count -or
     foreach ($t in $Trimmed)      { $null = $md.AppendLine("- trimmed: $t") }
     foreach ($f in $failedProbes) { $null = $md.AppendLine("- probe failed: $f") }
     foreach ($l in $truncatedLogs) {
-        $null = $md.AppendLine("- **log truncated**: $($l.Log) returned $($l.Returned) of $($l.Available) events (cap $($l.Cap)). Counts are lower bounds and FirstSeen is not the true earliest occurrence.")
+        $null = $md.AppendLine("- **log truncated**: $($l.Log) returned the newest $($l.Returned) events and hit the cap ($($l.Cap)); at least that many matching events exist. Counts are lower bounds and FirstSeen is not the true earliest occurrence.")
     }
     foreach ($n in @($nonZeroProbes) | Select-Object -First 12) {
         $null = $md.AppendLine("- non-zero exit: $($n.Probe) returned $($n.ExitCode) (often normal for query tools - check the output before treating it as a failure)")
