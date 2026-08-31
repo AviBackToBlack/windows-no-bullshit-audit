@@ -84,8 +84,11 @@ def validate_metadata(version: str) -> None:
     claude_plugins = claude_market.get("plugins") or []
     if len(claude_plugins) != 1 or claude_plugins[0].get("name") != SKILL_NAME:
         fail("Claude marketplace must expose exactly the canonical plugin")
-    if claude_plugins[0].get("source") != "./":
+    claude_entry = claude_plugins[0]
+    if claude_entry.get("source") != "./":
         fail("Claude marketplace source must point at repository root")
+    if claude_entry.get("version") != version:
+        fail(f"Claude marketplace version {claude_entry.get('version')!r} != SKILL.md version {version!r}")
 
 
 def run_skill_validator() -> None:
@@ -100,8 +103,6 @@ def run_skill_validator() -> None:
 def iter_files() -> list[tuple[str, Path]]:
     """Return (archive-relative path, source path), sorted for determinism."""
     ignored_names = {"__pycache__", ".DS_Store", "Thumbs.db"}
-    # tests/ is authoring infrastructure. Shipping it wastes payload and invites
-    # the agent to try running the validator at audit time.
     ignored_dirs = {"tests"}
     entries: list[tuple[str, Path]] = []
     for path in SKILL_DIR.rglob("*"):
@@ -118,8 +119,6 @@ def iter_files() -> list[tuple[str, Path]]:
     if not entries:
         fail("canonical Skill directory is empty")
 
-    # MIT requires the notice to travel with copies, and the standalone artifact
-    # is a copy.
     license_path = ROOT / "LICENSE"
     if not license_path.is_file():
         fail("missing LICENSE at repository root")
@@ -129,8 +128,6 @@ def iter_files() -> list[tuple[str, Path]]:
 
 
 def build_zip(target: Path, entries: list[tuple[str, Path]]) -> None:
-    # ZIP_STORED avoids zlib-version-dependent output, making the archive bytes
-    # deterministic across Python installations as long as the input bytes match.
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_STORED) as archive:
         for rel, src in entries:
             arcname = f"{SKILL_NAME}/{rel}"

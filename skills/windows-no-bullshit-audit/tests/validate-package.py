@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Package invariants for the canonical Agent Skill.
 
-Checks naming, frontmatter, resource links and internal consistency. It does not
-replace running the PowerShell collectors on real Windows 11 hosts; the Windows
-CI job does that.
+Checks naming, frontmatter, resource links, orchestration guardrails and internal
+consistency. It does not replace running the PowerShell collectors on real
+Windows 11 hosts; the Windows CI job does that.
 """
 
 from __future__ import annotations
@@ -16,8 +16,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "SKILL.md"
 
-# Digest budget. The whole point of this skill's rewrite is that triage input
-# stays small; if SKILL.md itself bloats, the budget goes with it.
 MAX_SKILL_LINES = 500
 MAX_SKILL_BYTES = 24_000
 MAX_REFERENCE_BYTES = 12_000
@@ -37,8 +35,34 @@ REQUIRED_RESOURCES = [
     "assets/finding-template.json",
 ]
 
+# These phrases encode release-critical orchestration invariants discovered from
+# real ChatGPT Web / Codex failures. Their removal must be an explicit review
+# decision, not an accidental edit that still packages green. Checks normalize
+# whitespace so ordinary Markdown wrapping cannot break validation.
+REQUIRED_SKILL_PHRASES = {
+    "first Windows target probe MUST be": "technical attestation must precede Windows audit probes",
+    "Operator confirmation cannot substitute for technical attestation": "user confirmation must not replace attestation",
+    "Approval is not elevation": "permission must not be confused with an elevated token",
+    "installed Skill version": "bundled scripts must stay version-coherent",
+    "Never fetch an individual bundled script from the network": "audit scripts must not be replaced from GitHub/web",
+    "Demonstrations must not fabricate evidence": "example prompts must not become fake audits",
+    "TARGET_CONFIRMATION": "the state machine must retain explicit target confirmation",
+    "ELEVATION_VERIFICATION": "the state machine must retain elevation verification",
+}
+
+REQUIRED_ATTESTATION_PHRASES = {
+    "User confirmation alone can never transition to `CONFIRMED_TARGET`": "attestation reference must forbid verbal-only confirmation",
+    "Never fetch an individual bundled `.ps1` from GitHub": "attestation reference must preserve bundled-code provenance",
+    "No synthetic evidence as a fallback": "attestation reference must forbid fabricated audit evidence",
+}
+
 errs: list[str] = []
 warns: list[str] = []
+
+
+def normalized_ws(value: str) -> str:
+    return " ".join(value.split())
+
 
 if not SKILL.is_file():
     print("FAIL")
@@ -46,6 +70,7 @@ if not SKILL.is_file():
     raise SystemExit(1)
 
 text = SKILL.read_text(encoding="utf-8")
+normalized_text = normalized_ws(text)
 
 # ---------------------------------------------------------------- frontmatter
 
@@ -63,12 +88,7 @@ def field(name: str) -> str | None:
 
 
 def single_line_string_field(name: str) -> str | None:
-    """Parse enough YAML scalar syntax to validate portable string fields.
-
-    The package intentionally has no PyYAML dependency. Portable frontmatter
-    fields are kept to one line; reject collection/block forms and obvious YAML
-    implicit non-string scalars rather than pretending our regex is a YAML parser.
-    """
+    """Parse enough YAML scalar syntax to validate portable string fields."""
     raw = field(name)
     if raw is None:
         return None
@@ -121,14 +141,16 @@ if field("compatibility") is not None:
     elif compat is not None and len(compat) > 500:
         errs.append(f"compatibility >500 chars ({len(compat)})")
 
-# Only these top-level frontmatter keys are recognized by both Claude Code and
-# Codex. Anything else risks a warning under `claude plugin validate --strict`.
 ALLOWED_FM_KEYS = {"name", "description", "license", "compatibility", "allowed-tools", "metadata"}
 top_keys = set(re.findall(r"(?m)^([A-Za-z][A-Za-z0-9_-]*):", fm))
 for key in sorted(top_keys - ALLOWED_FM_KEYS):
     errs.append(f"unrecognized top-level frontmatter key '{key}' (nest it under metadata:)")
 
-if not re.search(r"(?m)^\s{2}version:\s*[\"']?\d+\.\d+\.\d+", fm):
+version_match = re.search(
+    r"(?m)^\s{2}version:\s*[\"']?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)[\"']?\s*$",
+    fm,
+)
+if not version_match:
     errs.append("metadata.version missing or not semver")
 
 # ------------------------------------------------------------------- budgets
@@ -156,14 +178,11 @@ for rel in REQUIRED_RESOURCES:
     if not (ROOT / rel).exists():
         errs.append(f"missing required resource: {rel}")
 
-# Reverse check. An unreferenced reference is dead weight that ships in every
-# release and is never read - this is how lessons-from-real-audits.md rotted.
 mentioned = set(re.findall(r"references/[A-Za-z0-9._-]+\.md", text))
 for ref in sorted((ROOT / "references").glob("*.md")):
     if f"references/{ref.name}" not in mentioned:
         errs.append(f"orphaned reference (never mentioned in SKILL.md): references/{ref.name}")
 
-# Scripts must be discoverable too, otherwise the agent never runs them.
 for script in sorted((ROOT / "scripts").glob("*.ps1")):
     if script.name not in text:
         errs.append(f"orphaned script (never mentioned in SKILL.md): scripts/{script.name}")
@@ -188,14 +207,38 @@ if schema_path.is_file():
 
 # ------------------------------------------------------------- token hygiene
 
-# The skill must actually tell the agent not to slurp evidence. If these
-# disappear in a future edit, the token budget quietly dies with them.
 for phrase, why in [
     ("token-discipline.md", "SKILL.md must point at the token discipline reference"),
     ("TRIAGE.md", "SKILL.md must name the digest the agent is supposed to read"),
 ]:
     if phrase not in text:
         errs.append(f"{why} (missing '{phrase}')")
+
+# ------------------------------------------------------ orchestration contract
+
+for phrase, why in REQUIRED_SKILL_PHRASES.items():
+    if normalized_ws(phrase) not in normalized_text:
+        errs.append(f"{why} (missing '{phrase}')")
+
+attestation_path = ROOT / "references" / "target-attestation.md"
+if attestation_path.is_file():
+    attestation = normalized_ws(attestation_path.read_text(encoding="utf-8"))
+    for phrase, why in REQUIRED_ATTESTATION_PHRASES.items():
+        if normalized_ws(phrase) not in attestation:
+            errs.append(f"{why} (missing '{phrase}')")
+
+quality_path = ROOT / "tests" / "quality-gates.md"
+if quality_path.is_file():
+    quality = normalized_ws(quality_path.read_text(encoding="utf-8"))
+    for phrase in (
+        "Confirmation is not attestation",
+        "Hosted helper cannot export bundled file",
+        "Elevation approval is not elevation",
+        "No synthetic end-to-end audit",
+        "Installed bundle is authoritative",
+    ):
+        if normalized_ws(phrase) not in quality:
+            errs.append(f"quality-gates.md missing orchestration regression '{phrase}'")
 
 # ------------------------------------------------------------------- verdict
 

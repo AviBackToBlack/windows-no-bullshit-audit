@@ -10,7 +10,7 @@
       "name": "windows-no-bullshit-audit",
       "source": "./",
       "description": "Deep Windows 11 health, performance, security and hygiene audit. Evidence first. No cargo-cult fixes. Token-budgeted.",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "category": "Utilities",
       "keywords": [
         "windows-11",
