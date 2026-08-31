@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose a focused improvement to the Skill, collectors, packaging, or diagnostics
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What concrete audit, portability, packaging, or operator problem exists today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful change, not just an implementation preference.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence / real-world case
+      description: If this came from a real Windows audit, explain the case with sanitized evidence or references.
+
+  - type: textarea
+    id: contract
+    attributes:
+      label: Safety and compatibility impact
+      description: |
+        Consider target attestation, elevation, mutation/reboot approval, Windows PowerShell 5.1,
+        bounded evidence/digest size, privacy/redaction, and OpenAI/Claude portability.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This belongs in the Windows 11 audit Skill rather than general Windows support or unrelated automation.
+          required: true

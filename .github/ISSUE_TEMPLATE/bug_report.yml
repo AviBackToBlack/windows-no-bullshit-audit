@@ -1,0 +1,108 @@
+name: Bug report
+description: Installation, collection, packaging, or report behavior is wrong
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Sanitize everything before posting it publicly.**
+        Raw audit evidence and Windows event text can contain usernames, serials,
+        paths, hostnames, addresses, or other sensitive values. `-Redact` reduces
+        exposure but intentionally does not blanket-redact dotted-quad values.
+        Prefer a small relevant excerpt over uploading an entire raw evidence tree.
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - OpenAI plugin installation / loading
+        - Claude plugin installation / loading
+        - Standalone Skill package
+        - Target attestation
+        - Fast collector
+        - Deep collector
+        - Report assembly / verification
+        - Release packaging / CI
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Skill/plugin/release version or commit SHA.
+      placeholder: "v0.2.1 or 62f2689"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 Pro 25H2, build 26200.xxxx, x64"
+    validations:
+      required: true
+
+  - type: input
+    id: powershell
+    attributes:
+      label: PowerShell
+      placeholder: "Windows PowerShell 5.1 / PowerShell 7.x"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: elevation
+    attributes:
+      label: Was the failing command elevated?
+      options:
+        - "Yes"
+        - "No"
+        - "Not applicable / not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Exact steps or command needed to reproduce the problem.
+      placeholder: |
+        1. Installed via ...
+        2. Ran ...
+        3. Observed ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the smallest useful sanitized error/output excerpt.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Relevant sanitized evidence
+      description: Optional TRIAGE/attestation excerpt or other narrow evidence. Do not upload secrets or an entire raw evidence directory.
+      render: text
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I reviewed the pasted evidence and removed secrets and unnecessary personal/device identifiers.
+          required: true
