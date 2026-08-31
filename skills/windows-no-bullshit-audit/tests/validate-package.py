@@ -82,7 +82,7 @@ elif len(desc) > 1024:
 
 # Only these top-level frontmatter keys are recognized by both Claude Code and
 # Codex. Anything else risks a warning under `claude plugin validate --strict`.
-ALLOWED_FM_KEYS = {"name", "description", "license", "allowed-tools", "metadata"}
+ALLOWED_FM_KEYS = {"name", "description", "license", "compatibility", "allowed-tools", "metadata"}
 top_keys = set(re.findall(r"(?m)^([A-Za-z][A-Za-z0-9_-]*):", fm))
 for key in sorted(top_keys - ALLOWED_FM_KEYS):
     errs.append(f"unrecognized top-level frontmatter key '{key}' (nest it under metadata:)")

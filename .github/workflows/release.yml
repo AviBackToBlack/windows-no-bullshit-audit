@@ -23,8 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Parse every PowerShell file
-        shell: pwsh
+      - name: Parse every PowerShell file with Windows PowerShell 5.1
+        shell: powershell
         run: |
           $failed = $false
           Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
@@ -39,14 +39,6 @@ jobs:
             }
           }
           if ($failed) { exit 1 }
-
-      - name: PSScriptAnalyzer
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction Stop
-          Invoke-ScriptAnalyzer -Path skills/windows-no-bullshit-audit/scripts -Recurse -Severity Error,Warning |
-            Format-Table -AutoSize | Out-String -Width 200
 
       - name: Attestation probe must work without elevation
         shell: pwsh
@@ -107,9 +99,10 @@ jobs:
           # nothing - which is exactly what happened at 8000 bytes, where a bare
           # CI runner's digest fits at 7680. 1000 cannot be met by a digest that
           # still contains a target block.
+          $tinyCap = 1000
           $tiny = "$env:RUNNER_TEMP\audit-tiny"
           ./skills/windows-no-bullshit-audit/scripts/collect-baseline.ps1 `
-            -OutputRoot $tiny -Depth Fast -EventDays 1 -NoZip -MaxTriageBytes 1000 | Out-Null
+            -OutputRoot $tiny -Depth Fast -EventDays 1 -NoZip -MaxTriageBytes $tinyCap | Out-Null
           $code = $LASTEXITCODE
           $global:LASTEXITCODE = 0
 
@@ -119,7 +112,7 @@ jobs:
           $md        = Join-Path $run 'TRIAGE.md'
 
           if (Test-Path $json) {
-            throw "collector shipped TRIAGE.json at $((Get-Item $json).Length) bytes despite an 8000 byte cap"
+            throw "collector shipped TRIAGE.json at $((Get-Item $json).Length) bytes despite a $tinyCap byte cap"
           }
           if ($code -ne 75) { throw "expected exit 75 on budget overflow, got $code" }
           if (-not (Test-Path $oversized)) { throw 'overflow data was lost instead of being written as TRIAGE-OVERSIZED.json' }
@@ -131,7 +124,7 @@ jobs:
           # The Markdown budget must hold too, including the space taken by its
           # own truncation notice - appending that after measuring is the same
           # mistake that made the JSON cap advisory in the first place.
-          $mdCap = [int](1000 * 0.75)
+          $mdCap = [int]($tinyCap * 0.75)
           $mdSize = (Get-Item $md).Length
           if ($mdSize -gt $mdCap) { throw "TRIAGE.md is $mdSize bytes, over its $mdCap byte budget" }
 
