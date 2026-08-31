@@ -1,104 +1,65 @@
 # Audit Domains
 
-Use this as coverage guidance, not as a reason to invent findings.
+Coverage map. Most of this is collected automatically and summarized into
+`TRIAGE.md`; the "digest" column says where the answer already is, so you do not
+re-collect it. Use this as a completeness check, not as a reason to invent
+findings.
 
-## System / firmware baseline
+Load this file only when checking coverage at `FINAL_VALIDATION`, or when
+deciding whether a domain was actually examined.
 
-- edition, build, architecture, uptime;
-- motherboard/system model, BIOS/UEFI version/date;
-- CPU, memory, GPU, hypervisor state;
-- recent hardware migration context when discoverable.
+| Domain | Covered by fast baseline | Where in the digest |
+|---|---|---|
+| System / firmware baseline | yes | `target` |
+| Servicing / component store | CheckHealth only | `flags.dism_component_store`, deep pass for ScanHealth/SFC |
+| Storage / filesystem | yes | `storage`, `flags.dirty_volumes` |
+| Devices / drivers | yes | `pnp_problems`, `third_party_kernel_drivers`, `third_party_minifilters` |
+| Event chronology | yes | `top_event_signatures`, `counters` |
+| WER / dumps | inventory only | `flags.crash_dumps_present`, `flags.latest_dump` |
+| Boot / recovery / restore | yes | `flags.secure_boot`, `winre_enabled`, `restore_point_count`, `vss_writer_failures` |
+| Power | yes | `flags.fast_startup_enabled`, `hiberfile_present` |
+| Network | raw only | `10-Network\*` - query it |
+| Services / tasks / startup / software | yes | `third_party_auto_services`, `startup_entries`, `recent_software` |
+| Security | yes | `flags.*` security block |
+| Performance | tier 1 | `performance` |
+| Autostart deep pass | no | run `collect-autoruns.ps1` |
 
-## Windows integrity / servicing
+## Notes per domain
 
-- DISM CheckHealth, AnalyzeComponentStore, ScanHealth;
-- SFC VerifyOnly;
-- CBS/DISM logs when scans report corruption or anomalous repairs;
-- update servicing history and pending reboot state.
+**Servicing.** ScanHealth and SFC are in the deep pass, not the fast pass. Until
+`DEEP-TRIAGE.md` exists, treat them as `NOT_RUN`, not as clean.
 
-## Storage / filesystem
+**Storage.** Reliability counters, dirty bit, controller topology and
+disk/NVMe/AHCI/Storport/NTFS events. BitLocker state without exporting recovery
+secrets.
 
-- physical disks, buses, volumes, partitions, filesystems;
-- SMART/reliability counters when Windows exposes them;
-- dirty bit and online CHKDSK scan for fixed NTFS volumes;
-- storage controller topology;
-- disk/NVMe/AHCI/Storport/NTFS events;
-- BitLocker state without exporting recovery secrets;
-- VSS/shadow storage interaction when relevant.
+**Devices.** PnP problem codes, driver store, running third-party kernel
+drivers, minifilters and instances, Code Integrity operational log.
 
-## Devices / drivers
+**WER / dumps.** Inventory manifests and dump metadata. Do not copy dump
+payloads into the audit package. Analyze a dump only when a concrete crash
+question requires it and the operator approves.
 
-- PnP problem codes;
-- driver store and signed driver inventory;
-- currently running third-party kernel drivers;
-- filesystem minifilters and instances;
-- Code Integrity operational log;
-- Driver Frameworks/PnP failures when evidence warrants it.
+**Boot / recovery.** BCD inventory, WinRE state and location, Secure Boot, VSS
+writers/providers/shadows/shadow storage, System Restore configuration.
 
-## Event/reliability chronology
+**Power.** Available sleep states, active scheme, wake requests/timers/last
+wake, effective hibernation and Fast Startup, `powercfg /energy` in the deep
+pass, UPS and power-management software when present.
 
-- System, Application, Setup;
-- WHEA, BugCheck, Kernel-Power, Kernel-Boot, Kernel-PnP;
-- storage providers;
-- Service Control Manager;
-- application crash/hang/.NET Runtime/WER;
-- Windows Update and Code Integrity;
-- Task Scheduler where failed tasks matter.
+**Network.** Adapters and drivers, routes, IP configuration, Winsock catalog,
+firewall profiles, listening TCP endpoints, VPN virtual adapters and legacy
+residue. Not summarized by default - query `10-Network\` when a network finding
+is in play.
 
-## WER / dumps
+**Security.** Defender state and configuration, Secure Boot, TPM,
+VBS/Device Guard/HVCI, BitLocker, UAC and LSA protection, firewall profiles, and
+intentional compatibility exceptions.
 
-- inventory WER report manifests and dump metadata;
-- do not copy crash dumps into the standard audit package;
-- only analyze dump payloads when a concrete crash question requires it.
+## Marking a domain unavailable
 
-## Boot / recovery / restore
-
-- BCD inventory;
-- WinRE state and location;
-- Secure Boot state;
-- VSS writers/providers/shadows/shadow storage;
-- System Restore configuration/restore points where supported.
-
-## Power
-
-- available sleep states;
-- active power scheme;
-- wake requests/timers/last wake;
-- hibernation/Fast Startup effective state;
-- powercfg energy/system reports when useful;
-- UPS/power-management software and PnP identification when present.
-
-## Network
-
-- adapters, drivers, routes, IP configuration;
-- Winsock catalog;
-- firewall profiles;
-- listening TCP endpoints for anomaly/hygiene review;
-- VPN virtual adapters and legacy residues when present.
-
-## Services / tasks / startup / installed software
-
-- services and startup modes;
-- scheduled tasks and actions;
-- Run keys / Startup folders / Win32_StartupCommand;
-- installed package inventory;
-- Autoruns deep pass for shell extensions, drivers, services, tasks, Winsock, codecs, Active Setup, etc.
-
-## Security
-
-- Defender state/configuration;
-- Secure Boot, TPM;
-- VBS/Device Guard/HVCI/Memory Integrity state;
-- BitLocker state;
-- UAC/LSA protection indicators;
-- firewall profile state;
-- intentional compatibility exceptions.
-
-## Performance
-
-- CPU/queue/memory/paging/disk latency baseline;
-- top CPU/working set/handle processes;
-- DPC/interrupt baseline;
-- short WPR/ETW runtime trace;
-- deeper targeted trace only when evidence or symptoms justify it;
-- reboot-based boot trace only with approval.
+If a domain could not be examined, say so explicitly with the reason: probe
+failed, tool missing, not elevated, deliberately deferred for budget.
+`TRIAGE.json` lists `collection.failed_probes` and `trimmed` for exactly this.
+An unexamined domain silently presented as healthy is the worst outcome this
+skill can produce.

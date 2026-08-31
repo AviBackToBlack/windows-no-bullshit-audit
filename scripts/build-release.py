@@ -97,28 +97,42 @@ def run_skill_validator() -> None:
         fail("canonical Skill package validation failed")
 
 
-def iter_files() -> list[Path]:
+def iter_files() -> list[tuple[str, Path]]:
+    """Return (archive-relative path, source path), sorted for determinism."""
     ignored_names = {"__pycache__", ".DS_Store", "Thumbs.db"}
-    files = []
+    # tests/ is authoring infrastructure. Shipping it wastes payload and invites
+    # the agent to try running the validator at audit time.
+    ignored_dirs = {"tests"}
+    entries: list[tuple[str, Path]] = []
     for path in SKILL_DIR.rglob("*"):
         if not path.is_file():
             continue
+        rel_parts = path.relative_to(SKILL_DIR).parts
         if any(part in ignored_names for part in path.parts):
+            continue
+        if rel_parts and rel_parts[0] in ignored_dirs:
             continue
         if path.suffix in {".pyc", ".pyo", ".tmp"}:
             continue
-        files.append(path)
-    if not files:
+        entries.append((path.relative_to(SKILL_DIR).as_posix(), path))
+    if not entries:
         fail("canonical Skill directory is empty")
-    return sorted(files, key=lambda p: p.relative_to(SKILL_DIR).as_posix())
+
+    # MIT requires the notice to travel with copies, and the standalone artifact
+    # is a copy.
+    license_path = ROOT / "LICENSE"
+    if not license_path.is_file():
+        fail("missing LICENSE at repository root")
+    entries.append(("LICENSE", license_path))
+
+    return sorted(entries, key=lambda e: e[0])
 
 
-def build_zip(target: Path, files: list[Path]) -> None:
+def build_zip(target: Path, entries: list[tuple[str, Path]]) -> None:
     # ZIP_STORED avoids zlib-version-dependent output, making the archive bytes
     # deterministic across Python installations as long as the input bytes match.
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_STORED) as archive:
-        for src in files:
-            rel = src.relative_to(SKILL_DIR).as_posix()
+        for rel, src in entries:
             arcname = f"{SKILL_NAME}/{rel}"
             info = zipfile.ZipInfo(arcname, FIXED_ZIP_TIME)
             info.create_system = 3
@@ -150,7 +164,7 @@ def main() -> int:
 
     validate_metadata(version)
     run_skill_validator()
-    files = iter_files()
+    entries = iter_files()
 
     if DIST.exists():
         shutil.rmtree(DIST)
@@ -158,8 +172,14 @@ def main() -> int:
 
     zip_path = DIST / f"{SKILL_NAME}-{version}.zip"
     skill_path = DIST / f"{SKILL_NAME}-{version}.skill"
-    build_zip(zip_path, files)
+    build_zip(zip_path, entries)
     shutil.copyfile(zip_path, skill_path)
+
+    shipped = {rel for rel, _ in entries}
+    if "LICENSE" not in shipped:
+        fail("LICENSE missing from the standalone artifact")
+    if any(rel.startswith("tests/") for rel in shipped):
+        fail("tests/ must not ship in the standalone artifact")
 
     zip_hash = sha256(zip_path)
     skill_hash = sha256(skill_path)
@@ -167,7 +187,7 @@ def main() -> int:
         fail(".zip and .skill artifacts are not byte-identical")
 
     print(f"Version: {version}")
-    print(f"Files: {len(files)}")
+    print(f"Files: {len(entries)}")
     print(f"Built: {zip_path.relative_to(ROOT)}")
     print(f"SHA256: {zip_hash}")
     print(f"Built: {skill_path.relative_to(ROOT)}")

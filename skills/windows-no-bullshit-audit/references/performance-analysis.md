@@ -2,38 +2,57 @@
 
 ## Goal
 
-Find evidence of avoidable latency or resource waste even when the operator thinks the machine feels normal.
+Find avoidable latency and resource waste even when the operator thinks the
+machine feels normal. Performance is in scope by default, but it is *bounded*
+by default too.
 
-## Always collect
+## Two tiers
 
-- CPU total and processor queue;
-- available memory and paging activity;
-- physical disk latency/queue/throughput;
-- DPC and interrupt time;
-- top processes by CPU time and working set;
-- boot/logon/autostart context;
-- a short WPR runtime trace when WPR is available.
+**Tier 1 - always, free.** `collect-baseline.ps1` already captures the CPU/DPC/
+interrupt/queue/memory/paging/disk snapshot and the top processes by CPU and
+working set. They are in `TRIAGE.md`. Do not re-collect them.
 
-## Short WPR trace
+**Tier 2 - only when tier 1 or a reported symptom justifies it.** Run
+`scripts/collect-performance.ps1` for a bounded CIM sample plus a short WPR
+runtime trace.
 
-Use `scripts/collect-performance.ps1` for a bounded general trace. Keep it short enough to avoid needless ETL bloat.
+Do not run tier 2 "for completeness" on a machine whose tier 1 snapshot is
+unremarkable and whose operator reports no symptom. Say so in the report
+instead: a baseline was taken, it showed nothing, deeper tracing was not
+warranted. That is a finding, not a gap.
 
-If WPR is unavailable, ask whether the agent may install official Microsoft tooling or whether the operator will install it manually. Continue independent analysis while awaiting the answer.
+## Reading tier 1
 
-## Escalate only when evidence warrants it
+Signals that justify escalating:
 
-Examples:
+- sustained DPC or interrupt time above a few percent -> driver/interrupt analysis;
+- processor queue length consistently above core count -> CPU contention;
+- low available memory with sustained paging -> memory pressure;
+- high disk queue or percent disk time at low throughput -> latency, not bandwidth;
+- a process holding unexpected CPU seconds relative to uptime.
 
-- high DPC/ISR -> target driver/interrupt analysis;
+## Escalation targets
+
+- high DPC/ISR -> which driver, via ETW;
 - storage latency -> correlate with process/file I/O and storage events;
-- CPU spikes -> process/thread/stack analysis;
-- boot/logon slow -> reboot-based boot trace with explicit approval;
-- UI hangs without CPU saturation -> wait-chain, disk, GPU, shell extensions, or ETW-specific investigation.
+- CPU spikes -> process, thread and stack analysis;
+- slow boot or logon -> reboot-based boot trace, **explicit approval required**;
+- UI hangs without CPU saturation -> wait chains, disk, GPU, shell extensions.
 
-## Avoid benchmark theater
+## WPR
 
-Synthetic throughput benchmarks are not a substitute for latency analysis. Do not recommend risky cache/acceleration features just to improve benchmark numbers.
+`collect-performance.ps1` runs a bounded `GeneralProfile` trace. Keep it short;
+ETL files grow fast and are useless to read directly. If WPR is missing, ask the
+install-or-manual question once (see `tooling-and-web.md`) and continue other
+work meanwhile.
 
-## Interpret relative to hardware and workload
+Never read an `.etl` file as text. Analyze it with WPA, or extract a specific
+summary.
 
-A baseline that is technically "within limits" can still be poor for the hardware class. Use current device/vendor expectations and compare the measured bottleneck to what the platform should reasonably deliver.
+## Interpretation
+
+- A synthetic throughput benchmark is not latency analysis. Do not recommend
+  risky cache or acceleration features to improve a benchmark number.
+- "Within limits" can still be poor for the hardware class. Compare the measured
+  bottleneck to what that specific platform should deliver, using current vendor
+  expectations.

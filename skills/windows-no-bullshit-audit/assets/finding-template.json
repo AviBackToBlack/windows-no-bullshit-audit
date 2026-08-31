@@ -1,0 +1,25 @@
+{
+  "id": "F-001",
+  "domain": "storage | devices | events | integrity | boot | power | network | security | performance | software | system",
+  "title": "one line, specific, names the actual object",
+  "state": "healthy | observe | action | critical | historical",
+  "initial_state": "state at first classification; omit if unchanged",
+  "confidence": "HIGH | MEDIUM | LOW | UNKNOWN",
+  "local_evidence": [
+    "what was observed, with the evidence pointer - file plus filter, not the data itself",
+    "e.g. 05-Events/event-signatures.csv | ProviderName=storahci Id=129 Count=14"
+  ],
+  "lifecycle_context": [
+    "when it happens relative to boot/shutdown/sleep/update/install/migration",
+    "first seen, last seen, whether it predates a hardware or software change"
+  ],
+  "external_evidence": [
+    "https://learn.microsoft.com/... - what this source actually establishes"
+  ],
+  "conclusion": "root cause, only when the evidence justifies one",
+  "recommended_action": "required when state is action or critical",
+  "approval": "reference to the operator approval, if the action was performed",
+  "verification": "the independent post-change check and its result",
+  "remaining_uncertainty": "required when confidence is UNKNOWN, or when action/critical has no recommended_action. State the next discriminating test.",
+  "budget_note": "set when this finding was deliberately deferred to stay within budget, and say what would resolve it"
+}

@@ -1,342 +1,334 @@
 ---
 name: windows-no-bullshit-audit
-description: Deep Windows 11 health, performance, security, reliability, storage, driver, event-log, boot/recovery, power, network, software-hygiene, and autostart audit. Use when asked to comprehensively inspect, troubleshoot, validate, optimize, clean up, or repair a Windows 11 PC, including DISM/SFC, CHKDSK scans, WHEA, WER/dumps, PnP, minifilters, Code Integrity, VSS/WinRE, services/tasks/startup, Autoruns, and WPR/ETW performance. Evidence first. No cargo-cult fixes.
-compatibility: Windows 11 Home/Pro/Enterprise/Education on x64 or ARM64. Internet access is expected for current Microsoft/OEM/vendor research. Designed for interactive agent runtimes; local execution depends on client tool access.
+description: Deep Windows 11 health, performance, security, reliability, storage, driver, event-log, boot/recovery, power, network, software-hygiene and autostart audit. Use when asked to inspect, troubleshoot, diagnose, validate, optimize, clean up or repair a Windows 11 PC - including vaguer requests like "my PC is slow", "it keeps freezing", "random restarts", "blue screen / BSOD", "check if this machine is healthy", "why is boot so slow", "clean up startup programs". Covers DISM/SFC, CHKDSK, WHEA, WER/dumps, PnP, minifilters, Code Integrity, VSS/WinRE, services/tasks/startup, Autoruns and WPR/ETW. Evidence first. No cargo-cult fixes. Token-budgeted.
+license: MIT
 metadata:
-  version: "0.1.1"
+  version: "0.2.0"
   scope: "windows-11-client"
+  compatibility: "Windows 11 Home/Pro/Enterprise/Education, x64 or ARM64. Windows PowerShell 5.1. Collectors require an elevated session. Internet access expected for current vendor research."
 ---
 
 # Windows No-Bullshit Audit
 
-Deep-audit Windows 11 until the important findings are either verified healthy, explained, repaired and re-verified, intentionally accepted, or explicitly left unknown with a discriminating next test.
+Deep-audit Windows 11 until the important findings are verified healthy,
+explained, repaired and re-verified, intentionally accepted, or explicitly left
+`UNKNOWN` with a named next test.
 
-Do not optimize for a green dashboard. Optimize for justified conclusions.
+Do not optimize for a green dashboard. Optimize for justified conclusions,
+delivered inside the operator's budget.
+
+## 0. Budget is a constraint, not a nicety
+
+The operator pays for this audit in context window and usage quota. An audit
+that exhausts the quota halfway through is a failed audit.
+
+Three rules, in priority order:
+
+1. **Never trade a correct conclusion for tokens.**
+2. **Always trade thoroughness theater for tokens.**
+3. **Deterministic work belongs in PowerShell; judgement belongs in you.**
+
+The bundled collectors already count, group, filter, resolve signers and
+threshold the data. They emit a capped digest. Your job starts at the digest.
+
+Read [references/token-discipline.md](references/token-discipline.md) now. It is
+short and it is binding, especially the **evidence access protocol**.
+
+Non-negotiable summary:
+
+- Read `TRIAGE.md` (and `TRIAGE.json` for exact values). Read no other evidence
+  file in full, ever.
+- Raw evidence is **queried** with filters, projections and `-First N`. Never
+  `Get-Content` a `.csv`, `.log`, `.evtx`, `.etl`, `.nfo`, `dxdiag.txt`,
+  `energy.html` or `autoruns.xml`.
+- Never echo raw command output into the conversation. Report the reduction.
+- One probe, one question. If a probe cannot change a classification, skip it.
 
 ## 1. Attest the target before auditing it
 
-Do not confuse command capability with target identity.
+Command capability is not target identity. A sandbox, helper VM, container or
+cloud runtime can execute commands while being the wrong machine.
 
-A cloud sandbox, helper VM, container, or Work execution environment may expose shell/file access while **not** being the Windows 11 machine the operator intends to audit.
+1. determine what environment commands actually run in;
+2. if Windows, run `scripts/attest-target.ps1` (no admin needed, by design);
+3. establish computer name, edition/build, architecture, manufacturer/model,
+   current/interactive user, system drive, virtualization indicators;
+4. classify locality: `CONFIRMED_TARGET`, `NOT_TARGET`, `UNCONFIRMED`, `UNAVAILABLE`;
+5. never issue a health verdict for an unconfirmed environment.
 
-Before broad collection:
+If this is clearly not the target, **do not audit the sandbox**. Switch to
+delegated mode. The sandbox may still parse returned evidence, research and
+write reports - labelled as helper execution, never merged with target state.
 
-1. determine what environment commands are actually running in;
-2. if it is Windows, run `scripts/attest-target.ps1` or collect equivalent identity evidence;
-3. establish computer name, Windows edition/build, architecture, manufacturer/model, current/interactive user, system drive, and virtualization indicators;
-4. classify locality as `CONFIRMED_TARGET`, `NOT_TARGET`, `UNCONFIRMED`, or `UNAVAILABLE`;
-5. never issue a health verdict for an unconfirmed execution environment.
-
-If the current environment is clearly not the intended target, **do not audit the sandbox**. Switch to delegated mode and have the operator run the attestation/baseline collector on the intended Windows host. The sandbox may still parse evidence, research current facts, and generate reports.
-
-A virtual machine is valid if it is the machine the operator actually wants audited.
+A virtual machine is valid if it is the machine the operator wants audited.
 
 Read [references/target-attestation.md](references/target-attestation.md).
 
-## 2. Detect execution mode
+## 2. One opening round trip
 
-Determine capabilities **after target attestation**, not branding.
+Attestation, the safety gate and the elevation requirement are **one message**,
+not three turns:
 
-- **Agentic/local mode**: only when command execution is available **and** the candidate Windows host is confirmed as the intended target.
-- **Chat/delegated mode**: when you cannot execute on the target host, give the operator bundled copy-paste commands or downloadable bundled scripts, then analyze returned output/files.
-- Use the same diagnostic method in both modes.
-- In delegated mode, avoid one-command-per-turn drip feeding. Bundle independent probes so one operator round trip returns useful evidence.
+> I am about to audit `<computer>` - `<edition/build>`, `<manufacturer/model>`.
+> Please confirm:
+> 1. this is the machine you want audited;
+> 2. important work is saved and closed (later stages may close processes or
+>    need a reboot);
+> 3. you can run the collector from an **administrator** Terminal.
+>
+> The first pass is read-only and takes 1-3 minutes.
 
-Read [references/methodology.md](references/methodology.md) and [references/remediation-policy.md](references/remediation-policy.md) before making repair decisions.
+Do not mutate anything before that confirmation. Attestation, research and
+preparation may continue while waiting.
 
-## 3. Mandatory pre-flight gate
+**Elevation is a hard requirement** for every collector except
+`attest-target.ps1`. Un-elevated collection returns partial evidence that looks
+complete, which is worse than none. Say this up front; do not let the operator
+discover it from a failed run.
 
-At the beginning of every full audit, warn the operator that later diagnostic/remediation stages may close processes or require a reboot.
+## 3. Execution mode
 
-Require explicit confirmation that:
+- **Agentic/local**: command execution available *and* the host is
+  `CONFIRMED_TARGET`.
+- **Delegated**: you cannot execute on the target. Give the operator bundled
+  copy-paste commands, then analyze what comes back.
 
-1. the attested machine is the intended audit target;
-2. all important documents and application state are saved;
-3. anything that could lose unsaved data is closed or intentionally left open at the operator's risk;
-4. the operator is ready for a long-running audit.
+Same diagnostic method either way.
 
-When local attestation succeeds, combine target confirmation and this safety confirmation into **one** operator round trip.
+In delegated mode ask for **`TRIAGE.md` only** (~10-15 KB). Never ask for the
+ZIP; it contains 20 MB event logs. Request specific raw data only when a
+specific question needs it, and ask for *the output of a query*, not the file.
 
-Do not perform local system mutations before this confirmation. Minimal target attestation, current web research, and preparation may continue while waiting.
+## 4. Collect: fast first, slow in the background
 
-## 4. Create a durable audit run
+```powershell
+# 1-3 minutes, read-only, produces TRIAGE.md + TRIAGE.json
+.\collect-baseline.ps1
+.\collect-baseline.ps1 -Redact -CopyToClipboard   # for hosted chat
+```
 
-Only after locality is `CONFIRMED_TARGET`, in agentic mode create a run directory such as:
+`-Depth Fast` is the default and deliberately skips DISM ScanHealth, SFC,
+CHKDSK, `powercfg /energy`, msinfo32 and dxdiag. Those are 20-60 minutes and
+belong in the background:
 
-`%SystemDrive%\WindowsNoBullshitAudit\<timestamp>`
+```powershell
+.\collect-deep.ps1 -RunDir '<run>'      # poll DEEP-STATUS.json, read DEEP-TRIAGE.md
+```
 
-Never create target-health state from a sandbox/helper host and later merge it into the target run.
+Poll `DEEP-STATUS.json` (a few hundred bytes). Do not poll by re-reading logs,
+and do not sit in a wait loop with a full context attached - triage the fast
+digest while the deep scans run.
 
-Keep raw evidence, reports, checkpoints, and remediation history there. Never clear Windows logs as part of the audit.
+Until `DEEP-TRIAGE.md` exists, integrity is `NOT_RUN`, **not clean**.
 
-Maintain:
+The run directory (`%SystemDrive%\WindowsNoBullshitAudit\<stamp>`) holds raw
+evidence, `findings/`, reports and checkpoints. Never clear Windows logs. Never
+create target state from a helper host and merge it later.
 
-- `REPORT.md`
-- `audit-state.json`
-- `REMEDIATION-LOG.md`
-- `RESUME.md` whenever a reboot or handoff is pending
-
-Use the schemas/templates under `assets/`.
+Treat the evidence as sensitive. Crash dumps are inventoried, never copied.
+Servicing logs are copied only if a scan reported corruption.
 
 ## 5. State machine
 
-Run the audit as a state machine, not as a fixed checklist that blindly repairs everything:
+`TARGET_ATTESTATION` -> `BASELINE_COLLECTION` -> `TRIAGE` ->
+`TARGETED_INVESTIGATION` -> `CURRENT_WEB_RESEARCH` -> `REMEDIATION_PLANNING` ->
+`REMEDIATION` -> `POST_REPAIR_VERIFICATION` -> `SOFTWARE_HYGIENE` ->
+`FINAL_VALIDATION` -> `COMPLETE`
+
+A finding may loop investigate/repair/verify - but see the budget in §7.
+
+## 6. Triage from the digest
 
-1. `TARGET_ATTESTATION`
-2. `DISCOVERY`
-3. `BASELINE_COLLECTION`
-4. `TRIAGE`
-5. `TARGETED_INVESTIGATION`
-6. `CURRENT_WEB_RESEARCH`
-7. `PERFORMANCE_BASELINE`
-8. `REMEDIATION_PLANNING`
-9. `REMEDIATION`
-10. `POST_REPAIR_VERIFICATION`
-11. `SOFTWARE_HYGIENE`
-12. `FINAL_VALIDATION`
-13. `COMPLETE`
+Read [references/diagnostic-doctrine.md](references/diagnostic-doctrine.md)
+once, here. It carries the whole method: the observe/contextualize/map/research/
+hypothesize/discriminate/repair/verify loop, the evidence hierarchy, confidence
+labels, and the eight recurring mistakes that produce wrong Windows diagnoses.
 
-A finding may loop through investigation, repair, and verification multiple times.
+Core rules while reading `TRIAGE.md`:
 
-## 6. Collect broad read-only evidence first
+- An Event ID is a clue, not a diagnosis. A non-zero count is not ill health.
+- Correlate with boot, shutdown, sleep/resume, update, device migration, backup,
+  recovery, install/uninstall and operator actions.
+- Separate current runtime faults from historical and lifecycle-only events.
+- Resolve generic controller paths to real devices before blaming hardware.
+- A regex hit is not a finding until you have printed the matched field.
+- If evidence cannot distinguish hypotheses, record `UNKNOWN` plus the cheapest
+  discriminating test.
+- Check `collection.failed_probes` and `trimmed` in the digest. A trimmed or
+  failed section is unknown, not empty.
 
-Prefer `scripts/collect-baseline.ps1` for the first local pass. It is intentionally read-only with respect to Windows repair state.
+Produce a **severity-ordered worklist** before investigating anything.
 
-It should establish enough evidence to cover the domains in [references/audit-domains.md](references/audit-domains.md), including:
+## 7. Bounded investigation
 
-- OS/build/firmware/hardware baseline;
-- DISM health and SFC VerifyOnly;
-- disks, volumes, filesystem scans, storage reliability, controller/device topology;
-- PnP state, driver store, running drivers, minifilters;
-- System/Application/Setup and high-signal operational event logs;
-- WHEA, BugCheck, kernel power/lifecycle, storage, PnP, Code Integrity, update chronology;
-- Reliability Monitor/WER and dump inventory without copying dump payloads by default;
-- BCD/WinRE/VSS/System Restore state;
-- power/sleep/hibernate/Fast Startup state;
-- network adapters, routes, Winsock and firewall profiles;
-- services, tasks, startup, installed software;
-- Defender/Device Guard/BitLocker/TPM/Secure Boot/UAC state;
-- update/pending-reboot state;
-- lightweight performance counters.
+Triage is cheap and deterministic. Investigation is neither, so it gets a budget.
 
-In delegated mode, prefer giving the operator the collector once and asking for its ZIP rather than requesting dozens of individual commands.
+- Work the worklist top-down. Defer the tail **explicitly and visibly** rather
+  than grinding everything.
+- Default per finding: **at most 3 local probes and 2 web searches.** Exceeding
+  it means telling the operator why.
+- One discriminating test beats three confirming ones.
+- Once classified, store the classification plus an evidence *pointer* (file +
+  filter). Do not reopen the evidence.
+- Cache research verdicts in `research-cache.json` keyed by component+version.
+- Where the runtime supports subagents or background tasks, delegate bulk
+  evidence grepping so the raw output never enters the main context.
 
-Treat the audit ZIP as sensitive diagnostic data. Do not copy crash dumps or secret values by default.
+Research is mandatory when a conclusion depends on current facts - versions,
+support status, advisories, current recommendations. Never assert a current
+version or known issue from memory when web access exists. Keep
+`LOCAL EVIDENCE`, `WEB EVIDENCE` and `INFERENCE` separate. See
+[references/tooling-and-web.md](references/tooling-and-web.md).
 
-## 7. Triage by evidence, not Event Viewer aesthetics
+Domain references are **conditional** - load one only when a finding in that
+domain exists:
+[event-and-storage-analysis.md](references/event-and-storage-analysis.md),
+[security-analysis.md](references/security-analysis.md),
+[software-hygiene.md](references/software-hygiene.md),
+[performance-analysis.md](references/performance-analysis.md),
+[audit-domains.md](references/audit-domains.md).
 
-Read [references/evidence-rules.md](references/evidence-rules.md) and [references/event-and-storage-analysis.md](references/event-and-storage-analysis.md).
+## 8. Performance
 
-Core rules:
+Tier 1 is already in the digest: CPU, DPC, interrupt, queue, memory, paging,
+disk, top processes. Do not re-collect it.
 
-- An Event ID is a clue, not a diagnosis.
-- A non-zero error count does not imply an unhealthy system.
-- Correlate timestamps with boot, shutdown, sleep/resume, update, device migration, backup, recovery, install/uninstall, and user actions.
-- Resolve generic controller paths to actual physical devices before blaming hardware.
-- Separate current runtime faults from historical or lifecycle-only events.
-- Use exact matching when possible. A regex hit is not a finding until the matched field/value is inspected.
-- Old file timestamps are not sufficient reason to remove a driver.
-- `File not found` in Autoruns is not sufficient reason to delete an entry without understanding the registry/task/service semantics and product owner.
-- If evidence cannot distinguish hypotheses, report `UNKNOWN` and run the cheapest discriminating test.
+Tier 2 (`scripts/collect-performance.ps1`, bounded CIM sampling plus a short WPR
+trace) runs only when tier 1 or a reported symptom justifies it. "Baseline taken,
+unremarkable, deeper tracing not warranted" is a legitimate finding, not a gap.
 
-## 8. Use current web research aggressively and correctly
+If WPR is missing, ask the install-or-manual question once, batched with other
+questions. Official sources only. Boot tracing needs explicit approval.
 
-Internet research is part of the audit, not decoration.
+## 9. Mutation and approval
 
-Automatically research when conclusions depend on current information such as:
+Read [references/remediation-policy.md](references/remediation-policy.md).
 
-- current Windows behavior/documentation;
-- driver/firmware/software versions;
-- vendor support status and replacement products;
-- known issues/advisories;
-- device-specific maintenance guidance;
-- current security recommendations.
+Allowed after the pre-flight gate: read-only commands, web research, files owned
+by the audit run, hashing/parsing/reporting, and temporary diagnostic sessions
+that are reliably restored.
 
-Source priority:
+Explicit approval required: reboot/shutdown/logoff; install or uninstall;
+`DISM /RestoreHealth`, `sfc /scannow`, `chkdsk /f` or `/r`; driver/service/task/
+registry deletion or persistent config; service restarts affecting user,
+network, storage or security state; Windows/driver/firmware update; BitLocker,
+Secure Boot, TPM, VBS/HVCI, Defender or firewall changes; VSS/System Restore
+changes; boot/BCD/WinRE changes; partition/filesystem changes; anything with
+realistic data-loss or boot-loss potential.
 
-1. Microsoft official documentation/support
-2. OEM/hardware/software vendor official sources
-3. official project documentation/repositories
-4. reputable technical sources
-5. community reports only as supporting evidence
+**Software cleanup is always opt-in**, even when reversible.
 
-Never claim a current version, support status, firmware recommendation, or known issue solely from model memory when web access is available.
+Never use registry cleaners, debloat scripts, broad driver updaters, or
+cargo-cult timeout/power-policy registry hacks.
 
-Keep `LOCAL EVIDENCE`, `WEB EVIDENCE`, and `INFERENCE` conceptually separate.
+**Batch approvals.** Put every known approval question plus the next independent
+safe step in one message. Approval-only turns are the most wasteful thing in an
+interactive audit. Do not claim the runtime keeps executing while a blocking
+prompt is open - it usually cannot; instead make sure nothing was left un-asked.
 
-See [references/tooling-and-web.md](references/tooling-and-web.md).
+## 10. Reboot
 
-## 9. Performance is always in scope
+Never automatic. Finish pre-reboot branches, checkpoint `audit-state.json`,
+`REMEDIATION-LOG.md` and `RESUME.md`, explain why, list the post-reboot
+verification checks, then ask.
 
-A user may not know that the machine is underperforming.
+To resume: same conversation, `continue Windows audit`. On resume read
+`RESUME.md` and `audit-state.json` **and nothing else** before continuing.
 
-Always collect a lightweight performance baseline. Then, when WPR is available, run a short controlled runtime ETW trace using `scripts/collect-performance.ps1` unless doing so would interfere with active critical work.
+Windows booting is not evidence that a repair worked.
 
-If WPR/WPA is missing, ask one compact question while continuing independent work:
+## 11. Verify narrowly
 
-- option A: allow automatic installation from an official Microsoft source/package;
-- option B: operator installs it manually and provides the path.
+A successful command is not proof of health. For every remediation record the
+pre-change evidence, the exact action and rationale, the result, an independent
+post-change verification, and any new or changed fault set.
 
-If automatic official installation fails, provide manual official installation instructions. Never substitute an unofficial download mirror.
+```powershell
+.\verify-after-repair.ps1 -Only Events,Pnp -Since '<pre-repair timestamp>'
+```
 
-Only request reboot-based boot tracing after explicit approval.
+Use the narrowest scope that could falsify the repair. `Integrity` and `Storage`
+are slow; use them only when the repair touched the component store or the
+filesystem. Then re-run the specific discriminating test that exposed the
+finding - a clean broad pass does not prove a specific fault is gone.
 
-Read [references/performance-analysis.md](references/performance-analysis.md).
+If a repair reveals a *different* fault set, investigate again rather than
+declaring victory.
 
-## 10. Approval queue: do not waste turns
+## 12. Security is an audit, not a defaults enforcer
 
-In agentic mode, when an action needs approval:
+Classify as `observed state + current vendor recommendation + compatibility
+evidence + operator intent`. A deliberate deviation is not automatically broken.
 
-- add it to `pending_approvals` in `audit-state.json`;
-- ask the operator concisely;
-- continue all independent read-only/safe work;
-- return to the blocked action when approval arrives.
+Never silently enable BitLocker, Secure Boot, Memory Integrity/HVCI, Smart App
+Control, LSA protection, firewall policy or Defender features. Report the
+tradeoff; the operator decides.
 
-Batch approvals whenever possible.
+## 13. Software hygiene
 
-In delegated chat mode, include approval questions and the next independent safe probe in the same response when practical. Avoid approval-only turns if other useful work can be delegated at the same time.
+Run `scripts/collect-autoruns.ps1` and read `AUTORUNS-TRIAGE.md` - the capped
+list of entries that are not Microsoft-signed, unsigned, or missing their image.
+Never read `autoruns.xml`.
 
-Do not pretend that the platform can literally continue execution while a blocking UI approval is unresolved; instead maximize independent work around the blocked branch.
+Classify: `KEEP`, `OPTIONAL`, `OBSOLETE`, `ORPHAN`, `UNNECESSARY_AUTOSTART`,
+`INVESTIGATE`, `INTENTIONAL`.
 
-## 11. Mutation policy
+If a product is still registered as installed, use its official uninstaller
+first, then inspect what actually remains. Prefer an A/B disable over deletion.
+Summarize exactly what will be removed before acting.
 
-Automatically allowed without additional approval after pre-flight confirmation:
+## 14. Findings and reporting
 
-- read-only commands and queries;
-- current web research;
-- creation/update/removal of files owned by the audit run;
-- hashing, parsing, correlation, report generation;
-- temporary diagnostic sessions that are automatically stopped and restored to their prior state;
-- other clearly low-risk, fully reversible diagnostic-only actions confined to the audit process.
+One small file per finding: `findings/<id>.json`, shaped like
+`assets/finding-template.json`. Append-only.
 
-Require explicit operator approval for:
+`REPORT.md` and `audit-state.json` are **generated**, never hand-written:
 
-- reboot, shutdown, logoff;
-- installing or uninstalling software/tools/drivers;
-- `DISM /RestoreHealth`, `sfc /scannow`, offline repair, `chkdsk /f` or `/r`;
-- driver/service/task/registry deletion or persistent configuration changes;
-- service restarts that can affect user/network/storage/security state;
-- Windows Update, driver update, firmware/BIOS update;
-- BitLocker, Secure Boot, TPM, VBS/HVCI/Memory Integrity, Defender, firewall policy changes;
-- VSS/System Restore configuration changes or shadow-copy deletion;
-- boot/BCD/WinRE changes;
-- storage partition/filesystem changes;
-- any action with realistic data-loss or boot-loss potential.
+```powershell
+.\assemble-report.ps1 -RunDir '<run>'
+```
 
-**Software cleanup is always opt-in**, even if reversible.
+Run it at `FINAL_VALIDATION` and before a reboot checkpoint - not after every
+finding. Regenerating a growing report inside the model costs the whole report
+in output tokens and again as input next turn.
 
-Never use registry cleaners, debloat scripts, broad driver updaters, or cargo-cult timeout/power-policy registry hacks.
+User-facing states: white check healthy/verified, yellow observe/intentional/
+validation-pending, orange action-recommended, red critical, white-circle
+historical/noise. Set `initial_state` when a finding improves. Never downgrade
+severity to flatter the dashboard.
 
-## 12. Reboot protocol
+Each non-trivial finding carries: domain, observed evidence, lifecycle
+correlation, confidence, classification, root cause when justified,
+recommended/approved action, verification status, and sources for external
+claims.
 
-A reboot is never automatic.
+Read [references/reporting.md](references/reporting.md).
 
-Before requesting one:
-
-1. finish every useful pre-reboot branch;
-2. save `audit-state.json`, `REMEDIATION-LOG.md`, and `RESUME.md`;
-3. explain exactly why the reboot is needed;
-4. list the post-reboot verification checks;
-5. ask for explicit approval.
-
-Tell the operator how to resume:
-
-- resume the same agent conversation/session after Windows returns;
-- say `continue Windows audit` (or equivalent);
-- in agentic mode, read `RESUME.md` and `audit-state.json` before doing anything else.
-
-Do not assume a repair worked merely because Windows booted.
-
-## 13. Repair requires independent verification
-
-A successful command is not proof of health.
-
-For every remediation:
-
-1. record the pre-change evidence;
-2. record the exact action and rationale;
-3. record exit/result;
-4. run an independent post-change verification;
-5. check for new or changed fault sets;
-6. update the finding only after verification.
-
-Use `scripts/verify-after-repair.ps1` as a generic post-repair pass when appropriate.
-
-If a first repair reveals a different corruption/failure set, investigate again rather than declaring victory.
-
-## 14. Security is an audit, not a defaults enforcer
-
-Read [references/security-analysis.md](references/security-analysis.md).
-
-Classify security state using:
-
-`observed state + Microsoft/vendor recommendation + compatibility evidence + operator intent`
-
-A deliberate deviation is not automatically broken. Examples include intentionally disabled virtualization/security features for a required legacy peripheral or workflow.
-
-Do not silently enable BitLocker, Secure Boot, Memory Integrity/HVCI, Smart App Control, firewall policy, Defender features, or similar controls.
-
-## 15. Software hygiene and Autoruns
-
-Read [references/software-hygiene.md](references/software-hygiene.md).
-
-Use Autoruns when available; prefer `scripts/collect-autoruns.ps1`.
-
-Classify entries as:
-
-- `KEEP`
-- `OPTIONAL`
-- `OBSOLETE`
-- `ORPHAN`
-- `UNNECESSARY_AUTOSTART`
-- `INVESTIGATE`
-- `INTENTIONAL`
-
-If a product is still registered as installed, prefer its official uninstaller first. Only inspect/delete proven residue afterward.
-
-Always offer cleanup as a choice and summarize exactly what will be removed before acting.
-
-## 16. Finding states and dashboard
-
-Use exactly these user-facing states:
-
-- ✅ **Healthy / Verified**
-- 🟡 **Observe / Intentional / Validation pending**
-- 🟠 **Action recommended**
-- 🔴 **Critical**
-- ⚪ **Historical / Noise / Informational**
-
-Track counts over time, but never downgrade severity merely to make the final dashboard look better.
-
-Each non-trivial finding should contain:
-
-- domain;
-- observed evidence;
-- lifecycle/context correlation;
-- confidence;
-- classification;
-- hypothesis or root cause when justified;
-- recommended/approved action;
-- verification status;
-- sources for current external claims.
-
-## 17. Completion criteria
+## 15. Completion criteria
 
 Do not call the audit complete until:
 
-- target locality is `CONFIRMED_TARGET` and evidence provenance is attributable to that target;
-- all high-signal domains were checked or explicitly marked unavailable;
-- every 🔴/🟠 finding is repaired, intentionally deferred, or has a documented next test;
+- locality is `CONFIRMED_TARGET` and evidence provenance is attributable to it;
+- every high-signal domain was checked or **explicitly marked unavailable**,
+  including anything listed in `failed_probes` or `trimmed`;
+- every critical/action finding is repaired, intentionally deferred, or has a
+  documented next test;
 - every performed remediation has post-change verification;
 - software cleanup choices are recorded;
-- a performance baseline was collected and ETW/WPR was attempted when available;
-- the final report distinguishes current faults from historical/noise;
-- unresolved uncertainty is explicitly labeled `UNKNOWN` rather than guessed.
+- a performance baseline exists, and tier 2 was either run or explicitly judged
+  unwarranted;
+- the report distinguishes current faults from historical noise;
+- unresolved uncertainty is labelled `UNKNOWN`, not guessed;
+- anything deferred to stay within budget is **named in the report**.
 
-Generate the three durable deliverables using [references/reporting.md](references/reporting.md).
+The last point is not optional. An audit that quietly stopped early is worse
+than one that says which stone it left unturned and why.
 
-## 18. Tone and communication
+## 16. Tone
 
-Match the operator's language and technical level. Be direct, technically precise, and non-alarmist. The sarcastic skill name is not permission to be disrespectful.
+Match the operator's language and technical level. Direct, technically precise,
+non-alarmist. The sarcastic skill name is not permission to be disrespectful.
 
-Prefer concise progress checkpoints over repeated explanations. Explain reasoning when it changes a decision, prevents a dangerous fix, or distinguishes competing hypotheses.
+Prefer concise progress checkpoints over repeated explanation. Explain reasoning
+when it changes a decision, prevents a dangerous fix, or separates competing
+hypotheses.

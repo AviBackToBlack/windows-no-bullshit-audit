@@ -1,59 +1,57 @@
 # Software Hygiene and Autoruns
 
-## Purpose
+Load only when doing the software-hygiene phase. Deletion doctrine
+(`File not found` is not an orphan, one signal is never enough, exact-object
+mapping) is in `diagnostic-doctrine.md` and is not repeated here.
 
-Find unnecessary background load and stale system integration without turning the audit into indiscriminate debloating.
+## Goal
 
-## Autoruns collection
+Find unnecessary background load and stale system integration. Not debloating.
 
-Prefer `scripts/collect-autoruns.ps1` with signature verification and hashes. VirusTotal lookup is optional because it shares file hashes with an external service.
+## Collection
 
-Review non-Microsoft entries across:
+Run `scripts/collect-autoruns.ps1`. It keeps the full XML on disk and emits
+`AUTORUNS-TRIAGE.md`, a capped list of only the entries where a decision is even
+possible: not Microsoft-signed, unsigned/unverified, or image missing.
 
-- Logon/Run/Startup;
-- services;
-- drivers;
-- scheduled tasks;
-- Active Setup;
-- Explorer/shell extensions;
-- Winsock providers;
-- codecs/print monitors/other extension points.
+Read the digest. Query `autoruns-review.csv` for anything beyond it. Never read
+`autoruns.xml`.
+
+VirusTotal lookup (`-VirusTotal`) shares file hashes with a third party and
+therefore needs operator approval.
+
+Extension points worth attention: Logon/Run/Startup, services, drivers,
+scheduled tasks, Active Setup, Explorer/shell extensions, Winsock providers,
+codecs and print monitors.
 
 ## Classification
 
-- `KEEP` — needed/current.
-- `OPTIONAL` — legitimate but not required at startup.
-- `OBSOLETE` — supported product has a newer replacement or the component is no longer useful.
-- `ORPHAN` — owning product absent and the entry points to missing/unused residue, proven by evidence.
-- `UNNECESSARY_AUTOSTART` — legitimate software that need not start automatically.
-- `INVESTIGATE` — ownership/semantics unclear.
-- `INTENTIONAL` — deliberately retained despite age/unusual configuration.
+- `KEEP` - needed and current.
+- `OPTIONAL` - legitimate, but not required at startup.
+- `OBSOLETE` - superseded, or the component no longer does anything useful.
+- `ORPHAN` - owning product absent and the entry points at proven residue.
+- `UNNECESSARY_AUTOSTART` - legitimate software that need not start automatically.
+- `INVESTIGATE` - ownership or semantics unclear.
+- `INTENTIONAL` - deliberately retained despite age or unusual configuration.
 
-## Never delete based on one signal
+## Order of operations
 
-Before deleting an apparent orphan:
+1. If the product is still registered as installed, use its official
+   uninstaller. Reboot if required and approved.
+2. Re-run Autoruns and inspect what actually remains.
+3. Only then consider removing residue.
 
-1. inspect raw registry/service/task entry;
-2. resolve file path and signature;
-3. resolve installed product/owner;
-4. search uninstall inventory;
-5. check whether the binary or device still exists;
-6. inspect current vendor guidance if relevant.
+Prefer an A/B disable over deletion whenever the answer is uncertain. Disabling
+produces evidence; deleting produces a guess and no way back.
 
-Autoruns `File not found` can be a false positive for unusual registry semantics.
+## Legacy drivers and virtual adapters
 
-## Installed product first
+A disconnected legacy virtual adapter is not automatically a problem. Determine
+whether any active configuration still requires it. Disable as an A/B test
+before removing the driver package.
 
-If the product is still installed, use its official uninstaller. Reboot if required and approved. Then re-run Autoruns and inspect residue.
+## Presenting cleanup
 
-## Startup cleanup
-
-Prefer an A/B disable when unsure. If functionality is unaffected and the operator wants cleanup, remove through the owning application's settings/uninstaller when possible.
-
-## Legacy drivers/adapters
-
-A disconnected legacy virtual adapter is not automatically a problem. Determine whether any active configuration still requires it. Disable as an A/B test before deleting the driver package.
-
-## Exact matching
-
-Avoid broad regex cleanup. A substring match can capture unrelated services/devices. Print the exact object before any deletion.
+Cleanup is always opt-in. Present a batch, and for each item give: the item, its
+owner/product, why it is considered removable, the impact if removed, and the
+reinstall or rollback path. Then let the operator choose.

@@ -9,7 +9,16 @@
     {
       "name": "windows-no-bullshit-audit",
       "source": "./",
-      "description": "Deep Windows 11 health, performance, security and hygiene audit. Evidence first. No cargo-cult fixes."
+      "description": "Deep Windows 11 health, performance, security and hygiene audit. Evidence first. No cargo-cult fixes. Token-budgeted.",
+      "version": "0.2.0",
+      "category": "Utilities",
+      "keywords": [
+        "windows-11",
+        "diagnostics",
+        "performance",
+        "security",
+        "event-log"
+      ]
     }
   ]
 }

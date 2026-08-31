@@ -8,17 +8,238 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  # The whole point of 0.2.0. If a change makes the digest blow past this, the
+  # build fails rather than quietly eating the operator's quota again.
+  MAX_TRIAGE_JSON_BYTES: 60000
+  MAX_TRIAGE_MD_BYTES: 40000
 
 jobs:
+  # The functional payload is PowerShell. Linting it on Linux proves nothing.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse every PowerShell file
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $errors = $null; $tokens = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors) {
+              $failed = $true
+              Write-Host "::error file=$($_.FullName)::$($errors[0].Message)"
+              $errors | ForEach-Object { Write-Host "  $($_.Extent.StartLineNumber): $($_.Message)" }
+            } else {
+              Write-Host "OK  $($_.FullName)"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction Stop
+          Invoke-ScriptAnalyzer -Path skills/windows-no-bullshit-audit/scripts -Recurse -Severity Error,Warning |
+            Format-Table -AutoSize | Out-String -Width 200
+
+      - name: Attestation probe must work without elevation
+        shell: pwsh
+        run: |
+          $json = & ./skills/windows-no-bullshit-audit/scripts/attest-target.ps1 -Redact | Out-String
+          $obj = $json | ConvertFrom-Json
+          if (-not $obj.computer_name) { throw 'attest-target produced no computer_name' }
+          if ($obj.computer_name -ne '<COMPUTER>') { throw '-Redact did not pseudonymize computer_name' }
+          Write-Host "attested: $($obj.os_caption) build $($obj.os_build), elevated=$($obj.is_elevated)"
+
+      - name: Fast collector smoke test
+        shell: pwsh
+        run: |
+          # GitHub runners are already elevated, so the real gate is exercised.
+          ./skills/windows-no-bullshit-audit/scripts/collect-baseline.ps1 `
+            -OutputRoot "$env:RUNNER_TEMP\audit" -Depth Fast -EventDays 3 -NoZip -Redact
+          # The collector ends with an explicit exit 0, so this is its own status
+          # and not an inherited code from the last native tool it ran.
+          if ($LASTEXITCODE -ne 0) { throw "collector exited $LASTEXITCODE" }
+
+      - name: Enforce the digest budget
+        shell: pwsh
+        run: |
+          $run = Get-ChildItem "$env:RUNNER_TEMP\audit" -Directory | Select-Object -First 1
+          if (-not $run) { throw 'collector produced no run directory' }
+
+          foreach ($pair in @(
+            @{ File = 'TRIAGE.json'; Max = [int]$env:MAX_TRIAGE_JSON_BYTES },
+            @{ File = 'TRIAGE.md';   Max = [int]$env:MAX_TRIAGE_MD_BYTES }
+          )) {
+            $f = Join-Path $run.FullName $pair.File
+            if (-not (Test-Path $f)) { throw "$($pair.File) was not produced" }
+            $size = (Get-Item $f).Length
+            Write-Host "$($pair.File): $size bytes (cap $($pair.Max))"
+            if ($size -gt $pair.Max) { throw "$($pair.File) is $size bytes, over the $($pair.Max) byte budget" }
+            if ($size -lt 500) { throw "$($pair.File) is suspiciously small ($size bytes)" }
+          }
+
+          $t = Get-Content (Join-Path $run.FullName 'TRIAGE.json') -Raw | ConvertFrom-Json
+          foreach ($key in @('target','collection','flags','counters','storage','top_event_signatures','performance')) {
+            if (-not $t.PSObject.Properties[$key]) { throw "TRIAGE.json is missing section '$key'" }
+          }
+          if (-not $t.redacted) { throw '-Redact was not recorded in the digest' }
+          if ($t.target.computer -ne '<COMPUTER>') { throw '-Redact did not pseudonymize the digest' }
+
+          $failedProbes = @($t.collection.failed_probes)
+          Write-Host "failed probes: $($failedProbes.Count)"
+          $failedProbes | ForEach-Object { Write-Host "  - $_" }
+          # A handful of probes legitimately fail on a bare CI runner. A flood
+          # means the collector broke.
+          if ($failedProbes.Count -gt 8) { throw "too many failed probes ($($failedProbes.Count)) - collector is broken" }
+
+      - name: Digest cap is actually enforced, not merely attempted
+        shell: pwsh
+        run: |
+          # Regression test for the cap being advisory. The budget must be below
+          # the irreducible core on ANY machine, otherwise this silently tests
+          # nothing - which is exactly what happened at 8000 bytes, where a bare
+          # CI runner's digest fits at 7680. 1000 cannot be met by a digest that
+          # still contains a target block.
+          $tiny = "$env:RUNNER_TEMP\audit-tiny"
+          ./skills/windows-no-bullshit-audit/scripts/collect-baseline.ps1 `
+            -OutputRoot $tiny -Depth Fast -EventDays 1 -NoZip -MaxTriageBytes 1000 | Out-Null
+          $code = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+
+          $run = (Get-ChildItem $tiny -Directory | Select-Object -First 1).FullName
+          $json      = Join-Path $run 'TRIAGE.json'
+          $oversized = Join-Path $run 'TRIAGE-OVERSIZED.json'
+          $md        = Join-Path $run 'TRIAGE.md'
+
+          if (Test-Path $json) {
+            throw "collector shipped TRIAGE.json at $((Get-Item $json).Length) bytes despite an 8000 byte cap"
+          }
+          if ($code -ne 75) { throw "expected exit 75 on budget overflow, got $code" }
+          if (-not (Test-Path $oversized)) { throw 'overflow data was lost instead of being written as TRIAGE-OVERSIZED.json' }
+          if (-not (Test-Path $md)) { throw 'TRIAGE.md must still be produced so a failed budget does not leave the operator with nothing' }
+
+          $t = Get-Content $oversized -Raw | ConvertFrom-Json
+          if (@($t.trimmed).Count -lt 1) { throw 'trimming was never attempted before declaring overflow' }
+
+          # The Markdown budget must hold too, including the space taken by its
+          # own truncation notice - appending that after measuring is the same
+          # mistake that made the JSON cap advisory in the first place.
+          $mdCap = [int](1000 * 0.75)
+          $mdSize = (Get-Item $md).Length
+          if ($mdSize -gt $mdCap) { throw "TRIAGE.md is $mdSize bytes, over its $mdCap byte budget" }
+
+          # The irreducible core must survive even the most aggressive trimming.
+          foreach ($key in @('target','collection','flags','counters')) {
+            if (-not $t.PSObject.Properties[$key]) { throw "trimming destroyed the '$key' core section" }
+          }
+          Write-Host "cap enforced: exit $code, $(@($t.trimmed).Count) trims, TRIAGE.md $mdSize b within $mdCap b"
+
+          # And the normal budget must still fit without any trimming drama.
+          $t2 = Get-Content "$env:RUNNER_TEMP\audit\*\TRIAGE.json" -Raw | ConvertFrom-Json
+          if ($t2.digest_bytes -gt 60000) { throw 'default run exceeded the documented cap' }
+
+      - name: Report assembler round trip
+        shell: pwsh
+        run: |
+          $run = (Get-ChildItem "$env:RUNNER_TEMP\audit" -Directory | Select-Object -First 1).FullName
+          New-Item -ItemType Directory -Force "$run\findings" | Out-Null
+          '{"id":"F-001","domain":"storage","title":"t","state":"action","confidence":"MEDIUM","recommended_action":"a"}' |
+            Set-Content "$run\findings\F-001.json"
+          ./skills/windows-no-bullshit-audit/scripts/assemble-report.ps1 -RunDir $run -Validate
+          if ($LASTEXITCODE -ne 0) { throw 'finding validation failed on a valid finding' }
+
+          # An action finding with no next step must be rejected.
+          '{"id":"F-002","domain":"events","title":"t","state":"critical","confidence":"LOW"}' |
+            Set-Content "$run\findings\F-002.json"
+          ./skills/windows-no-bullshit-audit/scripts/assemble-report.ps1 -RunDir $run -Validate
+          if ($LASTEXITCODE -eq 0) { throw 'validator accepted a critical finding with no action and no next test' }
+          $global:LASTEXITCODE = 0
+
+          # Generation, not just -Validate, must fail on a malformed finding.
+          ./skills/windows-no-bullshit-audit/scripts/assemble-report.ps1 -RunDir $run | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'generation exited 0 despite an invalid finding' }
+          $global:LASTEXITCODE = 0
+          if ((Get-Content "$run\REPORT.md" -Raw) -notmatch 'validation problem') {
+            throw 'REPORT.md lacks the validation banner at the top'
+          }
+
+          Remove-Item "$run\findings\F-002.json"
+          # budget_note must reach the report; SKILL.md requires deferrals to be named.
+          '{"id":"F-003","domain":"events","title":"deferred item","state":"observe","confidence":"LOW","budget_note":"deferred: 2 probes already spent"}' |
+            Set-Content "$run\findings\F-003.json"
+          ./skills/windows-no-bullshit-audit/scripts/assemble-report.ps1 -RunDir $run
+          if ($LASTEXITCODE -ne 0) { throw "generation failed on valid findings ($LASTEXITCODE)" }
+          if (-not (Test-Path "$run\REPORT.md")) { throw 'REPORT.md was not generated' }
+          if (-not (Test-Path "$run\audit-state.json")) { throw 'audit-state.json was not generated' }
+          $report = Get-Content "$run\REPORT.md" -Raw
+          if ($report -notmatch 'deferred: 2 probes already spent') { throw 'budget_note never reached REPORT.md' }
+          if ($report -match 'validation problem') { throw 'stale validation banner on a clean run' }
+          $global:LASTEXITCODE = 0
+
+      - name: Upload smoke-test digest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triage-smoke
+          path: |
+            ${{ runner.temp }}/audit/**/TRIAGE.md
+            ${{ runner.temp }}/audit/**/TRIAGE.json
+            ${{ runner.temp }}/audit/**/COMMAND-JOURNAL.csv
+            ${{ runner.temp }}/audit/**/COLLECTOR-WARNINGS.txt
+            ${{ runner.temp }}/audit/**/REPORT.md
+          if-no-files-found: warn
+
   build:
     runs-on: ubuntu-latest
+    needs: windows
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+
+      - name: Validate plugin manifests against their schemas
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, sys
+          from pathlib import Path
+
+          codex = json.loads(Path('.codex-plugin/plugin.json').read_text())
+          claude = json.loads(Path('.claude-plugin/plugin.json').read_text())
+          market_codex = json.loads(Path('.agents/plugins/marketplace.json').read_text())
+          market_claude = json.loads(Path('.claude-plugin/marketplace.json').read_text())
+
+          errs = []
+          if codex.get('skills') != './skills/':
+              errs.append("codex plugin.json: skills must be './skills/'")
+          for key in ('displayName', 'shortDescription', 'category', 'capabilities'):
+              if key not in codex.get('interface', {}):
+                  errs.append(f'codex plugin.json: interface.{key} missing')
+          for entry in market_codex.get('plugins', []):
+              for key in ('installation', 'authentication'):
+                  if key not in entry.get('policy', {}):
+                      errs.append(f'codex marketplace: policy.{key} missing')
+              if 'category' not in entry:
+                  errs.append('codex marketplace: category missing')
+          if 'owner' not in market_claude:
+              errs.append('claude marketplace: owner missing')
+          if codex['version'] != claude['version']:
+              errs.append('plugin versions disagree')
+          if errs:
+              print('\n'.join('- ' + e for e in errs)); sys.exit(1)
+          print('manifests OK, version', codex['version'])
+          PY
 
       - name: Build standalone Skill artifacts
         shell: bash
@@ -34,6 +255,17 @@ jobs:
         run: |
           test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 1
           test "$(find dist -maxdepth 1 -type f -name '*.skill' | wc -l)" -eq 1
+          unzip -l dist/*.zip | grep -q 'windows-no-bullshit-audit/LICENSE'
+          ! unzip -l dist/*.zip | grep -q 'windows-no-bullshit-audit/tests/'
+
+      - name: Build is reproducible
+        shell: bash
+        run: |
+          first=$(sha256sum dist/*.zip | head -1 | cut -d' ' -f1)
+          python scripts/build-release.py >/dev/null
+          second=$(sha256sum dist/*.zip | head -1 | cut -d' ' -f1)
+          test "$first" = "$second" || { echo "build is not deterministic"; exit 1; }
+          echo "deterministic: $first"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
