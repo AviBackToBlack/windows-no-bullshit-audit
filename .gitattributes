@@ -1,0 +1,19 @@
+# Keep repository text deterministic across Windows and Unix checkouts.
+* text=auto
+
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.py text eol=lf
+*.ps1 text eol=lf
+LICENSE text eol=lf
+
+# Release and image artifacts are binary and must never be normalized.
+*.skill binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
