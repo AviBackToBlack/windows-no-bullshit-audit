@@ -24,8 +24,12 @@ The digest byte cap is enforced in CI against a real collector run, so it cannot
 
 ## Safety philosophy
 
-- **Target Machine Attestation is mandatory.** Command access does not prove the commands run on the PC the operator meant. A sandbox, helper VM, container or cloud runtime must never be mistaken for the target.
-- Every collector except attestation **requires an elevated session** and refuses to run without one, because partial evidence that looks complete is worse than none.
+- **Target Machine Attestation is mandatory and technical.** On a candidate Windows command host, the first Windows target probe is the bundled `scripts/attest-target.ps1`. A known hostname, prior conversation, runtime metadata or the operator saying "yes, this is the PC" cannot substitute for current bundled attestation evidence.
+- `CONFIRMED_TARGET` requires both current bundled attestation output and operator confirmation of that returned fingerprint.
+- The **installed Skill bundle is the source of truth** for audit scripts. Web access is for current diagnostic research, never for fetching an individual bundled `.ps1` or silently mixing Skill versions.
+- In hosted/delegated mode, bundled files are surfaced/exported when the runtime supports it. If it cannot expose bundled files, the fallback is the matching **versioned standalone release artifact**, not a raw GitHub script.
+- Every collector except attestation **requires an elevated session** and refuses to run without one. In agentic mode, administrator approval is not proof that the execution broker supplied an elevated token; elevation must be verified before collection is claimed to have started.
+- Example/demo requests may invent a realistic user prompt, but must not fabricate target evidence, collector output, Windows events, findings, repairs or verification unless the operator explicitly requested a synthetic simulation.
 - Read-only evidence comes before remediation. Risky or non-reversible changes require operator approval. Reboot always requires approval.
 - Intentional security deviations are not automatically classified as broken.
 - Event IDs are evidence, not diagnoses. Repair success must be independently verified, with the narrowest check that could falsify it.
@@ -101,7 +105,7 @@ Python 3 standard library is sufficient for the packager:
 
 ```bash
 python scripts/build-release.py
-python scripts/build-release.py --tag v0.2.1
+python scripts/build-release.py --tag v0.2.2
 ```
 
 The build validates the Skill, checks manifest identity/version consistency, runs the package validator, and produces deterministic ZIP bytes.
@@ -116,11 +120,14 @@ Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
   if ($e) { "FAIL $($_.Name): $($e[0].Message)" } else { "OK   $($_.Name)" }
 }
 
-# fast collector, from an ELEVATED terminal
+# attestation is always the first Windows target probe
+.\skills\windows-no-bullshit-audit\scripts\attest-target.ps1
+
+# fast collector, only from a genuinely ELEVATED terminal/execution context
 .\skills\windows-no-bullshit-audit\scripts\collect-baseline.ps1 -Depth Fast -NoZip -Redact
 ```
 
-CI runs the same checks on `windows-latest`, plus the digest byte-cap assertion and a report-assembler round trip, before the Linux job builds the release.
+CI runs the same collector checks on `windows-latest`, plus the digest byte-cap assertion, report-assembler round trip, package invariants and release reproducibility.
 
 ## License
 

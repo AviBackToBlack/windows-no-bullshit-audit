@@ -1,7 +1,7 @@
 {
   "name": "windows-no-bullshit-audit",
   "description": "Deep Windows 11 health, performance, security and hygiene audit. Evidence first. No cargo-cult fixes.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "author": {
     "name": "AviBackToBlack",
     "url": "https://github.com/AviBackToBlack"
