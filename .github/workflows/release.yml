@@ -49,10 +49,11 @@ jobs:
           if ($obj.computer_name -ne '<COMPUTER>') { throw '-Redact did not pseudonymize computer_name' }
           Write-Host "attested: $($obj.os_caption) build $($obj.os_build), elevated=$($obj.is_elevated)"
 
-      - name: Fast collector smoke test
-        shell: pwsh
+      - name: Fast collector smoke test under Windows PowerShell 5.1
+        shell: powershell
         run: |
-          # GitHub runners are already elevated, so the real gate is exercised.
+          # GitHub runners are already elevated, so the real gate is exercised
+          # under the advertised Windows PowerShell 5.1 compatibility level.
           ./skills/windows-no-bullshit-audit/scripts/collect-baseline.ps1 `
             -OutputRoot "$env:RUNNER_TEMP\audit" -Depth Fast -EventDays 3 -NoZip -Redact
           # The collector ends with an explicit exit 0, so this is its own status
