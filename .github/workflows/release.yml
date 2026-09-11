@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # The whole point of 0.2.0. If a change makes the digest blow past this, the
   # build fails rather than quietly eating the operator's quota again.
@@ -20,8 +24,11 @@ jobs:
   # The functional payload is PowerShell. Linting it on Linux proves nothing.
   windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Parse every PowerShell file with Windows PowerShell 5.1
         shell: powershell
@@ -179,7 +186,7 @@ jobs:
 
       - name: Upload smoke-test digest
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: triage-smoke
           path: |
@@ -189,16 +196,20 @@ jobs:
             ${{ runner.temp }}/audit/**/COLLECTOR-WARNINGS.txt
             ${{ runner.temp }}/audit/**/REPORT.md
           if-no-files-found: warn
+          retention-days: 14
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: windows
+    timeout-minutes: 15
     permissions:
-      contents: write
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.x'
 
@@ -244,40 +255,81 @@ jobs:
             python scripts/build-release.py
           fi
 
-      - name: Verify artifacts
+      - name: Verify artifacts and checksums
         shell: bash
         run: |
           test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 1
           test "$(find dist -maxdepth 1 -type f -name '*.skill' | wc -l)" -eq 1
+          test -f dist/SHA256SUMS
+          (cd dist && sha256sum -c SHA256SUMS)
           unzip -l dist/*.zip | grep -q 'windows-no-bullshit-audit/LICENSE'
           ! unzip -l dist/*.zip | grep -q 'windows-no-bullshit-audit/tests/'
 
       - name: Build is reproducible
         shell: bash
         run: |
-          first=$(sha256sum dist/*.zip | head -1 | cut -d' ' -f1)
+          sha256sum dist/* | sort > "$RUNNER_TEMP/first-build.sha256"
           python scripts/build-release.py >/dev/null
-          second=$(sha256sum dist/*.zip | head -1 | cut -d' ' -f1)
-          test "$first" = "$second" || { echo "build is not deterministic"; exit 1; }
-          echo "deterministic: $first"
+          sha256sum dist/* | sort > "$RUNNER_TEMP/second-build.sha256"
+          diff -u "$RUNNER_TEMP/first-build.sha256" "$RUNNER_TEMP/second-build.sha256"
+          echo 'all release outputs are deterministic'
 
-      - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v7
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: standalone-skill
+          name: standalone-skill-${{ github.sha }}
           path: dist/*
           if-no-files-found: error
+          retention-days: 14
 
-      - name: Create or update GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the verified build output
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: standalone-skill-${{ github.sha }}
+          path: dist
+
+      - name: Re-verify downloaded checksums
         shell: bash
         run: |
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
-          else
-            gh release create "${GITHUB_REF_NAME}" dist/* \
-              --title "${GITHUB_REF_NAME}" \
-              --generate-notes
+          set -euo pipefail
+          test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 1
+          test "$(find dist -maxdepth 1 -type f -name '*.skill' | wc -l)" -eq 1
+          test -f dist/SHA256SUMS
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.skill
+
+      - name: Create immutable-ready draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::Release ${GITHUB_REF_NAME} already exists; refusing to overwrite or clobber published/draft assets."
+            exit 1
           fi
+
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --draft \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*.zip dist/*.skill dist/SHA256SUMS
