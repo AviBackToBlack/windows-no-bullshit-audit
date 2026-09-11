@@ -277,7 +277,7 @@ jobs:
       - name: Upload verified release bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: standalone-skill-${{ github.sha }}
+          name: standalone-skill-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
@@ -295,7 +295,7 @@ jobs:
       - name: Download the verified build output
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: standalone-skill-${{ github.sha }}
+          name: standalone-skill-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist
 
       - name: Re-verify downloaded checksums
@@ -306,6 +306,17 @@ jobs:
           test "$(find dist -maxdepth 1 -type f -name '*.skill' | wc -l)" -eq 1
           test -f dist/SHA256SUMS
           (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: Refuse to mutate an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::Release ${GITHUB_REF_NAME} already exists; refusing to create provenance or overwrite assets."
+            exit 1
+          fi
 
       - name: Attest release artifacts
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
@@ -321,8 +332,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Keep a second existence check to fail closed if another actor creates
+          # the release after the pre-attestation guard and before publication.
           if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "::error::Release ${GITHUB_REF_NAME} already exists; refusing to overwrite or clobber published/draft assets."
+            echo "::error::Release ${GITHUB_REF_NAME} appeared during this run; refusing to overwrite or clobber assets."
             exit 1
           fi
 
