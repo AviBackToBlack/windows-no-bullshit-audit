@@ -169,6 +169,7 @@ def main() -> int:
 
     zip_path = DIST / f"{SKILL_NAME}-{version}.zip"
     skill_path = DIST / f"{SKILL_NAME}-{version}.skill"
+    sums_path = DIST / "SHA256SUMS"
     build_zip(zip_path, entries)
     shutil.copyfile(zip_path, skill_path)
 
@@ -183,12 +184,22 @@ def main() -> int:
     if zip_hash != skill_hash or zip_path.read_bytes() != skill_path.read_bytes():
         fail(".zip and .skill artifacts are not byte-identical")
 
+    # Keep checksums deterministic and part of the canonical local/CI release
+    # output. Do not include SHA256SUMS in itself.
+    sums_path.write_text(
+        f"{zip_hash}  {zip_path.name}\n"
+        f"{skill_hash}  {skill_path.name}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
     print(f"Version: {version}")
     print(f"Files: {len(entries)}")
     print(f"Built: {zip_path.relative_to(ROOT)}")
     print(f"SHA256: {zip_hash}")
     print(f"Built: {skill_path.relative_to(ROOT)}")
     print(f"SHA256: {skill_hash}")
+    print(f"Built: {sums_path.relative_to(ROOT)}")
     return 0
 
 
