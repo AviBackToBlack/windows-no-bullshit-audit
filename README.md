@@ -90,6 +90,8 @@ The `.skill` asset is **the same ZIP payload byte-for-byte** with a convenience 
 
 The release workflow keeps ordinary PR/main builds read-only. A `v*` tag first produces and verifies the same CI bundle, then a separate tag-only job downloads that verified bundle, re-checks `SHA256SUMS`, records GitHub artifact provenance for the `.zip` and `.skill`, and creates a **draft** GitHub release for maintainer review. Existing releases/assets are never clobbered by the workflow.
 
+Security vulnerabilities should be reported privately; see [SECURITY.md](SECURITY.md) for the disclosure policy.
+
 ## Repository layout
 
 ```text
